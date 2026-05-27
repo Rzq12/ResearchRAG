@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # RAG
     top_k_retrieval: int = 6       # chunks to retrieve from ChromaDB
-    similarity_threshold: float = 0.3  # minimum cosine similarity score to include chunk
+    similarity_threshold: float = 0.2  # minimum cosine similarity score to include chunk
     max_tokens_response: int = 1500    # max tokens for LLM response
     chunk_size: int = 800          # chars per chunk
     chunk_overlap: int = 150       # overlap between chunks

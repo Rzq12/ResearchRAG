@@ -110,7 +110,18 @@ with st.sidebar:
         type="password",
         key="openalex_api_key",
     )
-    col2.caption("OpenAlex uses abstracts only")
+
+    ingest_mode = st.radio(
+        "Ingest mode",
+        options=["Abstracts only", "Full-text (Open Access)", "Both"],
+        index=0,
+        horizontal=True,
+        help=(
+            "**Abstracts only** — cepat, selalu tersedia.\n"
+            "**Full-text** — download PDF open-access via Semantic Scholar & Unpaywall (lebih lambat).\n"
+            "**Both** — ingest abstrak dulu, lalu cari full-text."
+        ),
+    )
 
     if st.button("🔍 Search & Ingest", use_container_width=True):
         if not search_query.strip():
@@ -144,57 +155,56 @@ with st.sidebar:
 
             if works:
                 st.session_state.openalex_results = works
-                with st.spinner("Ingesting abstracts into ChromaDB..."):
-                    ingest_openalex_abstracts(works, user_id=active_user_id)
-                st.success(f"✅ {len(works)} works ingested!")
+
+                # ── Abstract ingestion ────────────────────────────────────────
+                if ingest_mode in ("Abstracts only", "Both"):
+                    with st.spinner("Ingesting abstracts into ChromaDB..."):
+                        ingest_openalex_abstracts(works, user_id=active_user_id)
+                    st.success(f"✅ {len(works)} abstracts ingested!")
+
+                # ── Full-text ingestion ────────────────────────────────────
+                if ingest_mode in ("Full-text (Open Access)", "Both"):
+                    status_ph = st.empty()
+                    def _cb(msg: str):
+                        status_ph.caption(msg)
+
+                    with st.spinner("Fetching full-text PDFs (Semantic Scholar / Unpaywall)..."):
+                        ft_result = fetch_fulltext_batch(
+                            works,
+                            user_id=active_user_id,
+                            status_callback=_cb,
+                        )
+                    status_ph.empty()
+
+                    fetched  = ft_result["fetched"]
+                    skipped  = ft_result["skipped"]
+                    failed   = ft_result["failed"]
+
+                    if fetched > 0:
+                        st.success(f"✅ Full-text ingested: {fetched} paper(s)")
+                    if skipped > 0:
+                        st.info(f"ℹ️ Already indexed: {skipped} paper(s)")
+                    if failed > 0:
+                        st.warning(f"⚠️ No open-access PDF found: {failed} paper(s)")
+
+                    with st.expander("📋 Full-text details"):
+                        for d in ft_result["details"]:
+                            icon = {"ingested": "✅", "already_indexed": "ℹ️"}.get(
+                                d["status"], "⚠️"
+                            )
+                            src    = f" [{d['source']}]" if d.get("source") else ""
+                            chunks = f" — {d['chunks']} chunks" if d.get("chunks") else ""
+                            st.caption(f"{icon} {d['title'][:60]}{src}{chunks}")
             else:
                 st.error("No works found.")
 
-    # Show last search results + full-text fetch
+    # Show last search results
     if st.session_state.openalex_results:
         with st.expander(f"📄 OpenAlex results ({len(st.session_state.openalex_results)} works)"):
             for w in st.session_state.openalex_results:
                 st.markdown(f"**[{w.title}]({w.url})**")
                 st.caption(f"{', '.join(w.authors[:2])} · {w.published}")
                 st.write("")
-
-        # ── Full-text fetch button ────────────────────────────────────────
-        if st.button("🔗 Fetch Full-Text (Open Access)", use_container_width=True,
-                     help="Coba download PDF lengkap via Semantic Scholar & Unpaywall"):
-            if cfg.require_user_id and not active_user_id:
-                st.warning("User ID wajib diisi.")
-            else:
-                status_ph = st.empty()
-                def _cb(msg: str):
-                    status_ph.caption(msg)
-
-                with st.spinner("Fetching full-text PDFs…"):
-                    ft_result = fetch_fulltext_batch(
-                        st.session_state.openalex_results,
-                        user_id=active_user_id,
-                        status_callback=_cb,
-                    )
-                status_ph.empty()
-
-                fetched = ft_result["fetched"]
-                skipped = ft_result["skipped"]
-                failed  = ft_result["failed"]
-
-                if fetched > 0:
-                    st.success(f"✅ Full-text ingested: {fetched} paper(s)")
-                if skipped > 0:
-                    st.info(f"ℹ️ Already indexed: {skipped} paper(s)")
-                if failed > 0:
-                    st.warning(f"⚠️ No open-access PDF found: {failed} paper(s)")
-
-                with st.expander("📋 Full-text details"):
-                    for d in ft_result["details"]:
-                        icon = {"ingested": "✅", "already_indexed": "ℹ️"}.get(
-                            d["status"], "⚠️"
-                        )
-                        src = f" [{d['source']}]" if d.get("source") else ""
-                        chunks = f" — {d['chunks']} chunks" if d.get("chunks") else ""
-                        st.caption(f"{icon} {d['title'][:60]}{src}{chunks}")
 
     st.divider()
 

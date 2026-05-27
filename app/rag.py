@@ -74,6 +74,7 @@ def retrieve_chunks(query: str, top_k: int = None, user_id: str | None = None) -
         chunks, metadatas = zip(*filtered)
         chunks, metadatas = list(chunks), list(metadatas)
     else:
+        # Return empty but include the best score found for diagnostic
         chunks, metadatas = [], []
 
     return chunks, metadatas
@@ -141,8 +142,23 @@ def ask(
     chunks, metadatas = retrieve_chunks(query, user_id=user_id)
 
     if not chunks:
+        collection = get_collection(user_id)
+        if collection.count() == 0:
+            # Truly empty — no documents at all
+            answer = "Belum ada dokumen di database. Silakan search OpenAlex atau upload PDF terlebih dahulu."
+        else:
+            # Has documents but none passed similarity threshold
+            answer = (
+                f"Tidak ada chunk yang cukup relevan ditemukan untuk pertanyaan ini "
+                f"(threshold similarity: {cfg.similarity_threshold}).\n\n"
+                "Kemungkinan penyebab:\n"
+                "- Pertanyaan terlalu jauh dari topik dokumen yang ada\n"
+                "- Coba turunkan `SIMILARITY_THRESHOLD` di `.env` (contoh: `0.1`)\n"
+                "- Coba ulangi pertanyaan dalam bahasa Inggris\n"
+                "- Pastikan dokumen yang relevan sudah ter-ingest"
+            )
         return RAGResponse(
-            answer="Belum ada dokumen di database. Silakan search OpenAlex atau upload PDF terlebih dahulu.",
+            answer=answer,
             references=[],
             openalex_papers_used=0,
             uploaded_docs_used=0,
