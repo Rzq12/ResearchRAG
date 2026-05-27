@@ -6,10 +6,12 @@ Research assistant yang menjawab pertanyaan ilmiah dengan sitasi dari **OpenAlex
 
 - 🔍 **Search OpenAlex real-time** — cari paper by keyword, langsung diingest ke ChromaDB
 - 📎 **Upload PDF sendiri** — paper apapun bisa dijadikan knowledge base
+- 🔗 **Full-text open access** — otomatis cari & download PDF lengkap via Semantic Scholar & Unpaywall
 - 💬 **Chat dengan sitasi** — setiap jawaban disertai referensi `[1]`, `[2]` yang bisa diklik
 - 🧠 **Multi-turn conversation** — ingat konteks percakapan sebelumnya
 - 🗄️ **Persistent storage** — ChromaDB tersimpan di disk, tidak hilang setelah restart
 - 📊 **Relevance score** — setiap referensi menampilkan skor kemiripan semantik
+- 🎯 **Similarity threshold** — chunk tidak relevan (< 0.3) difilter sebelum masuk LLM
 
 ## 🏗️ Arsitektur
 
@@ -119,15 +121,19 @@ git push -u origin main
 
 Edit `.env` untuk custom behavior:
 
-| Variable           | Default           | Keterangan                               |
-| ------------------ | ----------------- | ---------------------------------------- |
-| `GROQ_MODEL`       | `llama3-70b-8192` | Pilih model Groq yang tersedia           |
-| `TOP_K_RETRIEVAL`  | `6`               | Jumlah chunks yang diambil dari ChromaDB |
-| `TOP_K_OPENALEX`   | `5`               | Jumlah works dari OpenAlex per search    |
-| `OPENALEX_API_KEY` | `(empty)`         | API key OpenAlex (opsional)              |
-| `OPENALEX_MAILTO`  | `(empty)`         | Email untuk identifikasi polite usage    |
-| `CHUNK_SIZE`       | `800`             | Panjang tiap chunk (karakter)            |
-| `CHUNK_OVERLAP`    | `150`             | Overlap antar chunk                      |
+| Variable               | Default                   | Keterangan                                     |
+| ---------------------- | ------------------------- | ---------------------------------------------- |
+| `GROQ_MODEL`           | `llama-3.3-70b-versatile` | Pilih model Groq yang tersedia                 |
+| `TOP_K_RETRIEVAL`      | `6`                       | Jumlah chunks yang diambil dari ChromaDB       |
+| `SIMILARITY_THRESHOLD` | `0.3`                     | Minimum cosine similarity; chunk di bawah ini difilter |
+| `MAX_TOKENS_RESPONSE`  | `1500`                    | Max tokens jawaban LLM                         |
+| `TOP_K_OPENALEX`       | `5`                       | Jumlah works dari OpenAlex per search          |
+| `OPENALEX_API_KEY`     | `(empty)`                 | API key OpenAlex (opsional)                    |
+| `OPENALEX_MAILTO`      | `(empty)`                 | Email untuk identifikasi polite usage          |
+| `CHUNK_SIZE`           | `800`                     | Panjang tiap chunk (karakter)                  |
+| `CHUNK_OVERLAP`        | `150`                     | Overlap antar chunk                            |
+| `FULLTEXT_MAILTO`      | `(empty)`                 | Email untuk Unpaywall polite pool (opsional)   |
+| `FULLTEXT_MAX_PDF_MB`  | `30`                      | Ukuran maks PDF yang akan didownload           |
 
 ## 📁 Struktur Proyek
 
@@ -140,6 +146,7 @@ arxiv-rag/
 │   ├── chunker.py        # PDF extraction & text chunking
 │   ├── openalex_service.py  # OpenAlex search + ingestion
 │   ├── pdf_service.py    # PDF upload management
+│   ├── fulltext_service.py  # Full-text via Semantic Scholar & Unpaywall
 │   └── rag.py            # Retrieval + Groq LLM chain
 ├── data/
 │   └── chroma_db/        # Persistent vector store (gitignored)

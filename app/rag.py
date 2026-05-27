@@ -64,6 +64,18 @@ def retrieve_chunks(query: str, top_k: int = None, user_id: str | None = None) -
     for i, meta in enumerate(metadatas):
         meta["_score"] = round(1 - distances[i], 4)
 
+    # Filter out chunks below similarity threshold
+    threshold = cfg.similarity_threshold
+    filtered = [
+        (c, m) for c, m in zip(chunks, metadatas)
+        if m.get("_score", 0) >= threshold
+    ]
+    if filtered:
+        chunks, metadatas = zip(*filtered)
+        chunks, metadatas = list(chunks), list(metadatas)
+    else:
+        chunks, metadatas = [], []
+
     return chunks, metadatas
 
 
@@ -168,7 +180,7 @@ Answer based on the context above and cite references using [1], [2], etc."""
         model=cfg.groq_model,
         messages=messages,
         temperature=0.3,
-        max_tokens=1500,
+        max_tokens=cfg.max_tokens_response,
     )
 
     answer = response.choices[0].message.content

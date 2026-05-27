@@ -11,6 +11,7 @@ from app.openalex_service import search_openalex, ingest_openalex_abstracts
 from app.pdf_service import ingest_pdf, list_uploaded_docs, delete_document
 from app.rag import ask
 from app.config import get_settings
+from app.fulltext_service import fetch_fulltext_batch
 
 # ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -149,13 +150,51 @@ with st.sidebar:
             else:
                 st.error("No works found.")
 
-    # Show last search results
+    # Show last search results + full-text fetch
     if st.session_state.openalex_results:
         with st.expander(f"📄 OpenAlex results ({len(st.session_state.openalex_results)} works)"):
             for w in st.session_state.openalex_results:
                 st.markdown(f"**[{w.title}]({w.url})**")
                 st.caption(f"{', '.join(w.authors[:2])} · {w.published}")
                 st.write("")
+
+        # ── Full-text fetch button ────────────────────────────────────────
+        if st.button("🔗 Fetch Full-Text (Open Access)", use_container_width=True,
+                     help="Coba download PDF lengkap via Semantic Scholar & Unpaywall"):
+            if cfg.require_user_id and not active_user_id:
+                st.warning("User ID wajib diisi.")
+            else:
+                status_ph = st.empty()
+                def _cb(msg: str):
+                    status_ph.caption(msg)
+
+                with st.spinner("Fetching full-text PDFs…"):
+                    ft_result = fetch_fulltext_batch(
+                        st.session_state.openalex_results,
+                        user_id=active_user_id,
+                        status_callback=_cb,
+                    )
+                status_ph.empty()
+
+                fetched = ft_result["fetched"]
+                skipped = ft_result["skipped"]
+                failed  = ft_result["failed"]
+
+                if fetched > 0:
+                    st.success(f"✅ Full-text ingested: {fetched} paper(s)")
+                if skipped > 0:
+                    st.info(f"ℹ️ Already indexed: {skipped} paper(s)")
+                if failed > 0:
+                    st.warning(f"⚠️ No open-access PDF found: {failed} paper(s)")
+
+                with st.expander("📋 Full-text details"):
+                    for d in ft_result["details"]:
+                        icon = {"ingested": "✅", "already_indexed": "ℹ️"}.get(
+                            d["status"], "⚠️"
+                        )
+                        src = f" [{d['source']}]" if d.get("source") else ""
+                        chunks = f" — {d['chunks']} chunks" if d.get("chunks") else ""
+                        st.caption(f"{icon} {d['title'][:60]}{src}{chunks}")
 
     st.divider()
 
@@ -184,7 +223,11 @@ with st.sidebar:
                     st.warning(f"{f.name} terlalu besar (maks {cfg.max_upload_mb} MB).")
                     continue
                 with st.spinner(f"Processing {f.name}..."):
-                    result = ingest_pdf(f.read(), f.name, user_id=active_user_id)
+                    try:
+                        result = ingest_pdf(f.read(), f.name, user_id=active_user_id)
+                    except ValueError as e:
+                        st.warning(f"⚠️ {f.name}: {e}")
+                        continue
                 if result["chunks_added"] > 0:
                     st.success(f"✅ {f.name}: {result['chunks_added']} chunks added")
                 else:

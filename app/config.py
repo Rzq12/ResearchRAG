@@ -5,7 +5,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # Groq
     groq_api_key: str | None = None
-    groq_model: str = "llama3-70b-8192"
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # ChromaDB
     chroma_path: str = "./data/chroma_db"
@@ -31,8 +31,14 @@ class Settings(BaseSettings):
 
     # RAG
     top_k_retrieval: int = 6       # chunks to retrieve from ChromaDB
+    similarity_threshold: float = 0.3  # minimum cosine similarity score to include chunk
+    max_tokens_response: int = 1500    # max tokens for LLM response
     chunk_size: int = 800          # chars per chunk
     chunk_overlap: int = 150       # overlap between chunks
+
+    # Full-text fetching (Semantic Scholar + Unpaywall)
+    fulltext_mailto: str | None = None  # email for Unpaywall polite pool (falls back to openalex_mailto)
+    fulltext_max_pdf_mb: int = 30       # max size to download for full-text PDFs
 
     class Config:
         env_file = ".env"
