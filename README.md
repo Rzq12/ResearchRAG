@@ -2,7 +2,7 @@
 title: ResearchRAG
 emoji: 🔬
 colorFrom: indigo
-colorTo: cyan
+colorTo: purple
 sdk: docker
 app_port: 8501
 pinned: false
