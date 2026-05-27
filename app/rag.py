@@ -1,5 +1,5 @@
 from groq import Groq
-from app.database import get_collection, embed_texts
+from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_texts
 from app.config import get_settings
 from dataclasses import dataclass
 import re
@@ -38,71 +38,209 @@ Rules:
 """
 
 
-def retrieve_chunks(query: str, top_k: int = None, user_id: str | None = None) -> tuple[list[dict], list[dict]]:
+def retrieve_chunks(
+    query: str,
+    top_k: int = None,
+    user_id: str | None = None,
+) -> tuple[list[dict], list[dict]]:
     """
-    Retrieve top-k relevant chunks from ChromaDB.
-    Returns (chunks, metadatas).
+    Retrieve relevant context using Parent-Child retrieval strategy:
+
+    1. Embed query → search CHILD collection (small, precise chunks) for top-K*3 candidates
+    2. Optional: cross-encoder reranker re-scores candidates
+    3. Collect parent_ids from top children
+    4. Fetch PARENT chunks (large, rich context) from parent collection
+    5. Return parent texts as context to LLM (deduped, ordered by relevance)
+
+    Falls back to child text if parent lookup fails or parent_id is missing.
+
+    NOTE: We do NOT apply similarity_threshold during child search because child chunks
+    (~180 words) naturally have lower per-chunk scores. Threshold is only used to
+    detect when the top result is completely unrelated (score < threshold/2).
     """
     cfg = get_settings()
-    k = top_k or cfg.top_k_retrieval
-    collection = get_collection(user_id)
+    k   = top_k or cfg.top_k_retrieval
 
-    if collection.count() == 0:
+    child_col = get_collection(user_id)
+    if child_col.count() == 0:
         return [], []
 
+    # ── Step 1: Child search (NO threshold filter here) ──────────────────────
+    # Retrieve 3× more candidates to give reranker / parent dedup room to work
+    candidate_k     = min(k * 3, child_col.count(), 60)
     query_embedding = embed_texts([query])[0]
-    results = collection.query(
+
+    results = child_col.query(
         query_embeddings=[query_embedding],
-        n_results=min(k, collection.count()),
+        n_results=candidate_k,
         include=["documents", "metadatas", "distances"],
     )
 
-    chunks = results["documents"][0]
-    metadatas = results["metadatas"][0]
-    distances = results["distances"][0]
+    child_texts = results["documents"][0]
+    child_metas = results["metadatas"][0]
+    distances   = results["distances"][0]
+
+    if not child_texts:
+        return [], []
 
     # Attach similarity score (1 - cosine distance)
-    for i, meta in enumerate(metadatas):
-        meta["_score"] = round(1 - distances[i], 4)
+    candidates = []
+    for text, meta, dist in zip(child_texts, child_metas, distances):
+        score = round(1 - dist, 4)
+        candidates.append({
+            "text":     text,
+            "metadata": meta,
+            "_score":   score,
+        })
 
-    # Filter out chunks below similarity threshold
-    threshold = cfg.similarity_threshold
-    filtered = [
-        (c, m) for c, m in zip(chunks, metadatas)
-        if m.get("_score", 0) >= threshold
-    ]
-    if filtered:
-        chunks, metadatas = zip(*filtered)
-        chunks, metadatas = list(chunks), list(metadatas)
+    # Soft threshold check: if the BEST candidate is below threshold/2, the query
+    # is completely unrelated to anything in KB → return empty so LLM can say so.
+    best_score = candidates[0]["_score"] if candidates else 0
+    if best_score < cfg.similarity_threshold / 2:
+        return [], []
+
+    # ── Step 2: Optional reranker ─────────────────────────────────────────────
+    if cfg.enable_reranker and candidates:
+        try:
+            from app.reranker import rerank
+            flat = [{"text": c["text"], **c} for c in candidates]
+            reranked = rerank(
+                query      = query,
+                chunks     = flat,
+                model_name = cfg.reranker_model,
+                top_k      = k,
+            )
+            candidates = [
+                {"text": r["text"], "metadata": r["metadata"], "_score": r.get("_rerank_score", r["_score"])}
+                for r in reranked
+            ]
+        except Exception:
+            candidates = candidates[:k]
     else:
-        chunks, metadatas = [], []
+        candidates = candidates[:k]
 
-    return chunks, metadatas
+    # ── Step 3: Fetch parent chunks ───────────────────────────────────────────
+    parent_ids_ordered: list[str] = []
+    seen_parent_ids: set[str]     = set()
+    no_parent_candidates: list[dict] = []
+
+    for c in candidates:
+        pid = c["metadata"].get("parent_id", "")
+        if pid and pid not in seen_parent_ids:
+            parent_ids_ordered.append(pid)
+            seen_parent_ids.add(pid)
+        else:
+            # No parent_id: either old-pipeline chunk or parent lookup needed
+            no_parent_candidates.append(c)
+
+    # Fetch parent chunks (large context) from parent collection
+    parent_docs  = get_parents_by_ids(parent_ids_ordered, user_id) if parent_ids_ordered else []
+    parent_by_id = {p["id"]: p for p in parent_docs}
+
+    final_chunks:    list[str]  = []
+    final_metadatas: list[dict] = []
+
+    # Prefer parent chunks (rich context) in order of child relevance
+    for pid in parent_ids_ordered:
+        parent = parent_by_id.get(pid)
+        if parent and parent.get("text"):
+            final_chunks.append(parent["text"])
+            final_metadatas.append({**parent["metadata"], "_score": 1.0})
+        else:
+            # Parent not found in parent collection → use child chunk as fallback
+            # Find the child candidate that pointed to this parent_id
+            for c in candidates:
+                if c["metadata"].get("parent_id", "") == pid:
+                    final_chunks.append(c["text"])
+                    final_metadatas.append({**c["metadata"], "_score": c["_score"]})
+                    break
+
+    # Chunks without parent_id (old pipeline or fallback pages)
+    for c in no_parent_candidates:
+        if c["text"] not in final_chunks:   # avoid duplicates
+            final_chunks.append(c["text"])
+            final_metadatas.append({**c["metadata"], "_score": c["_score"]})
+
+    return final_chunks, final_metadatas
+
+
+
+
+@dataclass
+class Reference:
+    title: str
+    authors: str
+    published: str
+    url: str
+    source: str
+    relevance_score: float
+
+
+@dataclass
+class RAGResponse:
+    answer: str
+    references: list[Reference]
+    openalex_papers_used: int
+    uploaded_docs_used: int
+
+
+SYSTEM_PROMPT = """You are a research assistant with access to scientific papers from OpenAlex and user-uploaded documents.
+
+Your job is to answer questions accurately, grounding your answer in the provided context.
+
+Rules:
+1. Base your answer ONLY on the provided context chunks.
+2. When referencing information, cite the paper using [1], [2], etc. matching the reference list.
+3. If multiple papers support a claim, cite all of them: [1][3].
+4. If the context doesn't contain enough information, say so honestly.
+5. Be concise but thorough. Use bullet points for complex answers.
+6. Always end with a brief summary of key references used.
+7. Write in the same language as the question (Indonesian or English).
+"""
+
 
 
 def build_context(chunks: list[str], metadatas: list[dict]) -> tuple[str, list[Reference]]:
-    """Build context string and deduplicated reference list."""
-    seen_titles = {}
+    """
+    Build context string and deduplicated reference list.
+
+    Each unique document gets a metadata header (title, authors, year, section)
+    prepended once. This lets the LLM answer questions like "siapa authornya?"
+    even when author info is only in metadata, not in chunk text.
+    """
+    seen_titles: dict[str, int] = {}
     refs: list[Reference] = []
-    context_parts = []
+    context_parts: list[str] = []
 
     for chunk, meta in zip(chunks, metadatas):
-        title = meta.get("title", "Unknown")
+        title     = meta.get("title", "Unknown")
+        authors   = meta.get("authors", "")
+        published = meta.get("published", "")
+        section   = meta.get("section_title", "") or meta.get("section_path", "")
 
         if title not in seen_titles:
             ref_num = len(refs) + 1
             seen_titles[title] = ref_num
             refs.append(Reference(
-                title=title,
-                authors=meta.get("authors", ""),
-                published=meta.get("published", ""),
-                url=meta.get("url", ""),
-                source=meta.get("source", "unknown"),
-                relevance_score=meta.get("_score", 0.0),
+                title          = title,
+                authors        = authors,
+                published      = published,
+                url            = meta.get("url", ""),
+                source         = meta.get("source", "unknown"),
+                relevance_score = meta.get("_score", 0.0),
             ))
+            # Prepend metadata header for this document (first occurrence)
+            header_parts = [f"--- Paper [{ref_num}]: {title}"]
+            if authors:
+                header_parts.append(f"Authors: {authors}")
+            if published and published not in ("N/A", ""):
+                header_parts.append(f"Year: {published}")
+            context_parts.append("\n".join(header_parts))
 
         ref_num = seen_titles[title]
-        context_parts.append(f"[{ref_num}] {chunk}")
+        # Include section label if available
+        section_label = f" [{section}]" if section else ""
+        context_parts.append(f"[{ref_num}]{section_label} {chunk}")
 
     context = "\n\n".join(context_parts)
     return context, refs

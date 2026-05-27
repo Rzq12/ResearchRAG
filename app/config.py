@@ -9,9 +9,9 @@ class Settings(BaseSettings):
 
     # ChromaDB
     chroma_path: str = "./data/chroma_db"
-    chroma_collection: str = "arxiv_rag"
+    chroma_collection: str = "researchrag"
 
-    # Embedding model (runs locally, gratis)
+    # Embedding model (runs locally, free)
     embedding_model: str = "all-MiniLM-L6-v2"
 
     # OpenAlex search
@@ -29,17 +29,35 @@ class Settings(BaseSettings):
     # User scoping
     require_user_id: bool = True
 
-    # RAG
-    top_k_retrieval: int = 15          # chunks to retrieve from ChromaDB per query
-    similarity_threshold: float = 0.2  # minimum cosine similarity score
+    # ── RAG — retrieval ───────────────────────────────────────────────────────
+    top_k_retrieval: int = 15          # child chunks to retrieve per query
+    # NOTE: With parent-child retrieval this is a SOFT threshold.
+    # The system rejects a query only if best_child_score < threshold / 2.
+    # Recommended range: 0.05–0.15. Lower = more permissive retrieval.
+    similarity_threshold: float = 0.1  # was 0.2; lowered for parent-child strategy
     max_tokens_response: int = 2000    # max tokens for LLM response
+    summarize_max_chars: int = 20000   # max chars fed to summarizer LLM
+
+    # ── Chunking — child (small, for embedding precision) ─────────────────────
+    child_chunk_words: int = 180       # target words per child chunk
+    child_chunk_overlap_words: int = 30
+
+    # ── Chunking — parent (large, for LLM context) ────────────────────────────
+    parent_chunk_words: int = 700      # target words per parent chunk
+    children_per_parent: int = 4       # how many child chunks grouped into one parent
+
+    # ── Legacy char-based settings (still used for abstract chunking) ─────────
     chunk_size: int = 1200             # chars per chunk (≈240 words)
     chunk_overlap: int = 200           # overlap between chunks (≈40 words)
-    summarize_max_chars: int = 20000   # max chars fed to the summarizer LLM
 
-    # Full-text fetching (Semantic Scholar + Unpaywall)
-    fulltext_mailto: str | None = None  # email for Unpaywall polite pool (falls back to openalex_mailto)
-    fulltext_max_pdf_mb: int = 30       # max size to download for full-text PDFs
+    # ── Reranker (cross-encoder) ──────────────────────────────────────────────
+    enable_reranker: bool = False      # set True to enable; downloads ~80MB model on first use
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_top_k: int = 15          # top-k candidates after reranking
+
+    # ── Full-text fetching (Semantic Scholar + Unpaywall) ─────────────────────
+    fulltext_mailto: str | None = None  # email for Unpaywall polite pool
+    fulltext_max_pdf_mb: int = 30
 
     class Config:
         env_file = ".env"

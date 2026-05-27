@@ -6,13 +6,15 @@ import httpx
 # Make sure app/ is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.database import init_chroma, get_collection
-from app.openalex_service import search_openalex, ingest_openalex_abstracts
+from app.database import init_chroma, get_collection, get_parent_collection
+from app.openalex_service import search_openalex, ingest_openalex_abstracts, fetch_citation_network
 from app.pdf_service import ingest_pdf, list_uploaded_docs, delete_document
 from app.rag import ask, ask_stream, summarize_document, generate_query_suggestions
 from app.config import get_settings
 from app.fulltext_service import fetch_fulltext_batch
 from app.auth import init_auth_db, login_user, register_user
+from app.semantic_search import semantic_search
+from app.topic_classifier import classify_topics_batch, topic_badge_html, RESEARCH_TOPICS
 
 # ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -110,6 +112,12 @@ if "pending_query" not in st.session_state:
     st.session_state.pending_query = None
 if "doc_summaries" not in st.session_state:
     st.session_state.doc_summaries = {}
+if "topic_labels" not in st.session_state:
+    # dict: openalex_id → topic label string
+    st.session_state.topic_labels = {}
+if "citation_cache" not in st.session_state:
+    # dict: openalex_id → {ref_id: ref_title}
+    st.session_state.citation_cache = {}
 # Auth state
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -378,14 +386,45 @@ with st.sidebar:
             else:
                 st.error("No works found.")
 
+            # ── Auto-classify topics after ingest ──────────────────────────
+            if works:
+                _groq_key_topic = st.session_state.get("groq_api_key") or cfg.groq_api_key
+                if _groq_key_topic:
+                    unclassified = [
+                        w for w in works
+                        if w.openalex_id not in st.session_state.topic_labels
+                    ]
+                    if unclassified:
+                        with st.spinner("🏷️ Classifying paper topics..."):
+                            labels = classify_topics_batch(
+                                unclassified,
+                                groq_api_key=_groq_key_topic,
+                            )
+                            st.session_state.topic_labels.update(labels)
+
     # Show last search results + download
     if st.session_state.openalex_results:
         works_res = st.session_state.openalex_results
         with st.expander(f"📄 OpenAlex results ({len(works_res)} works)"):
             for w in works_res:
                 col_t, col_dl = st.columns([5, 1])
-                col_t.markdown(f"**[{w.title}]({w.url})**")
-                col_t.caption(f"{', '.join(w.authors[:2])} · {w.published}")
+
+                # Topic badge
+                topic_label = st.session_state.topic_labels.get(w.openalex_id, "")
+                badge_html  = topic_badge_html(topic_label) if topic_label else ""
+
+                col_t.markdown(
+                    f"**[{w.title}]({w.url})**&nbsp;&nbsp;{badge_html}",
+                    unsafe_allow_html=True,
+                )
+                # Authors + concepts
+                concepts_str = " · ".join(w.concepts[:3]) if w.concepts else ""
+                meta_line = f"{', '.join(w.authors[:2])} · {w.published}"
+                if concepts_str:
+                    meta_line += f"  |  🔑 {concepts_str}"
+                if w.citation_count:
+                    meta_line += f"  |  📊 {w.citation_count} citations"
+                col_t.caption(meta_line)
 
                 # Full-text PDF link if available
                 ft_info = st.session_state.fulltext_pdf_urls.get(w.title)
@@ -395,6 +434,33 @@ with st.sidebar:
                         f'title="Download full-text PDF ({ft_info["source"]})">📅 PDF</a>',
                         unsafe_allow_html=True,
                     )
+
+                # Citation network expander
+                if w.referenced_works:
+                    _cite_key = f"cite_{w.openalex_id}"
+                    if st.button(
+                        f"🔗 References ({len(w.referenced_works)})",
+                        key=_cite_key,
+                    ):
+                        if w.openalex_id not in st.session_state.citation_cache:
+                            with st.spinner("Fetching citation network..."):
+                                refs = fetch_citation_network(
+                                    w.openalex_id,
+                                    api_key=st.session_state.get("openalex_api_key"),
+                                )
+                                st.session_state.citation_cache[w.openalex_id] = refs
+
+                    if w.openalex_id in st.session_state.citation_cache:
+                        refs = st.session_state.citation_cache[w.openalex_id]
+                        if refs:
+                            for ref_id, ref_title in list(refs.items())[:15]:
+                                short = ref_id.replace("https://openalex.org/", "")
+                                st.caption(
+                                    f"&nbsp;&nbsp;&nbsp;↳ [{ref_title[:80]}]({ref_id})",
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.caption("  (No reference data available)")
 
             st.divider()
             # ── Download abstracts ────────────────────────────────────
@@ -476,7 +542,27 @@ with st.sidebar:
                         st.warning(f"⚠️ {f.name}: {e}")
                         continue
                 if result["chunks_added"] > 0:
-                    st.success(f"✅ {f.name}: {result['chunks_added']} chunks added")
+                    coverage = result.get("coverage")
+                    if coverage:
+                        pct = coverage.coverage_pct
+                        icon_cv = "✅" if pct == 100 else ("⚠️" if pct >= 80 else "❌")
+                        color   = "green" if pct == 100 else ("orange" if pct >= 80 else "red")
+                        st.success(
+                            f"**{f.name}** — {result['chunks_added']} child chunks + "
+                            f"{result['parents_added']} parent chunks"
+                        )
+                        st.markdown(
+                            f"<div style='border-left:3px solid {color};padding:6px 12px;"
+                            f"border-radius:0 6px 6px 0;background:rgba(0,0,0,0.2);margin-bottom:8px'>"
+                            f"{icon_cv} <b>Coverage: {pct}%</b> "
+                            f"({coverage.covered_pages}/{coverage.total_pages} pages)"
+                            f"{'  |  🔧 ' + str(coverage.fallback_used) + ' fallback chunks' if coverage.fallback_used else ''}"
+                            f"{'  |  ❌ Missing: ' + str(coverage.missing_pages) if coverage.missing_pages else ''}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.success(f"✅ {f.name}: {result['chunks_added']} chunks added")
                 else:
                     st.info(f"ℹ️ {f.name}: already indexed")
 
@@ -544,6 +630,14 @@ with st.sidebar:
         st.session_state.openalex_results = []
         st.session_state.fulltext_pdf_urls = {}
         st.session_state.query_suggestions = []
+        st.session_state.topic_labels = {}
+        st.session_state.citation_cache = {}
+        st.session_state.doc_summaries = {}
+        # Also clear parent collection
+        parent_col = get_parent_collection(active_user_id)
+        parent_ids = parent_col.get()["ids"]
+        if parent_ids:
+            parent_col.delete(ids=parent_ids)
         st.rerun()
 
     st.divider()
@@ -573,138 +667,211 @@ with st.sidebar:
             use_container_width=True,
         )
 
-# ─── Main Chat ───────────────────────────────────────────────────────────────
-st.title("🔬 Research Assistant")
-st.caption("Ask questions about your papers. I'll answer with citations from OpenAlex and uploaded PDFs.")
+# ─── Main Content Tabs ───────────────────────────────────────────────────────
+tab_chat, tab_search = st.tabs(["💬 Chat", "🔍 Semantic Search"])
 
-# ── Query Suggestions ─────────────────────────────────────────────────────────
-if st.session_state.query_suggestions:
-    st.markdown("**💡 Suggested questions** *(click to ask)*")
-    cols = st.columns(min(len(st.session_state.query_suggestions), 3))
-    for i, suggestion in enumerate(st.session_state.query_suggestions):
-        col = cols[i % 3]
-        if col.button(
-            suggestion,
-            key=f"suggestion_{i}",
-            use_container_width=True,
-            help="Click to ask this question",
-        ):
-            st.session_state.pending_query = suggestion
-            st.rerun()
-    st.divider()
+with tab_chat:
+    st.title("🔬 Research Assistant")
+    st.caption("Ask questions about your papers. I'll answer with citations from OpenAlex and uploaded PDFs.")
 
-# Display chat history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg.get("references"):
-            with st.expander(f"📚 References ({len(msg['references'])})"):
-                for i, ref in enumerate(msg["references"], 1):
-                    badge = (
-                        '<span class="badge-openalex">OpenAlex</span>'
-                        if ref["source"] == "openalex"
-                        else '<span class="badge-upload">Uploaded</span>'
-                    )
-                    link = f'<a href="{ref["url"]}" target="_blank">{ref["title"]}</a>' if ref["url"] else ref["title"]
-                    st.markdown(
-                        f'<div class="ref-card">'
-                        f'[{i}] {badge} {link}<br>'
-                        f'<span style="color:#888">{ref["authors"]} · {ref["published"]} · '
-                        f'score: {ref["relevance_score"]:.2f}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+    # ── Query Suggestions ─────────────────────────────────────────────────────────
+    if st.session_state.query_suggestions:
+        st.markdown("**💡 Suggested questions** *(click to ask)*")
+        cols = st.columns(min(len(st.session_state.query_suggestions), 3))
+        for i, suggestion in enumerate(st.session_state.query_suggestions):
+            col = cols[i % 3]
+            if col.button(
+                suggestion,
+                key=f"suggestion_{i}",
+                use_container_width=True,
+                help="Click to ask this question",
+            ):
+                st.session_state.pending_query = suggestion
+                st.rerun()
+        st.divider()
 
-# ── Chat Input (typed or from suggestion button) ──────────────────────────────
-typed_input = st.chat_input("Ask a research question...")
+    # Display chat history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg.get("references"):
+                with st.expander(f"📚 References ({len(msg['references'])})"):
+                    for i, ref in enumerate(msg["references"], 1):
+                        badge = (
+                            '<span class="badge-openalex">OpenAlex</span>'
+                            if ref["source"] == "openalex"
+                            else '<span class="badge-upload">Uploaded</span>'
+                        )
+                        link = f'<a href="{ref["url"]}" target="_blank">{ref["title"]}</a>' if ref["url"] else ref["title"]
+                        st.markdown(
+                            f'<div class="ref-card">'
+                            f'[{i}] {badge} {link}<br>'
+                            f'<span style="color:#888">{ref["authors"]} · {ref["published"]} · '
+                            f'score: {ref["relevance_score"]:.2f}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
 
-# Consume pending query from suggestion click (one shot)
-if st.session_state.pending_query:
-    prompt = st.session_state.pending_query
-    st.session_state.pending_query = None
-else:
-    prompt = typed_input
+    # ── Chat Input (typed or from suggestion button) ──────────────────────────────
+    typed_input = st.chat_input("Ask a research question...")
 
-if prompt:
-    if cfg.require_user_id and not active_user_id:
-        st.warning("User ID wajib diisi untuk memisahkan database per akun.")
-        st.stop()
+    # Consume pending query from suggestion click (one shot)
+    if st.session_state.pending_query:
+        prompt = st.session_state.pending_query
+        st.session_state.pending_query = None
+    else:
+        prompt = typed_input
+
+    if prompt:
+        if cfg.require_user_id and not active_user_id:
+            st.warning("User ID wajib diisi untuk memisahkan database per akun.")
+            st.stop()
+        if get_collection(active_user_id).count() == 0:
+            st.warning("⚠️ No documents in database yet. Search OpenAlex or upload a PDF first!")
+            st.stop()
+
+        cfg = get_settings()
+        groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
+        if not groq_key:
+            st.error("Groq API key belum diisi. Isi di sidebar atau .env.")
+            st.stop()
+
+        # Show user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Build history for Groq
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages[:-1]
+            if m["role"] in ("user", "assistant")
+        ]
+
+        # ── Streaming RAG response ────────────────────────────────────────────────
+        with st.chat_message("assistant"):
+            gen, refs, oa_count, up_count = ask_stream(
+                prompt,
+                chat_history=history,
+                groq_api_key=groq_key,
+                user_id=active_user_id,
+            )
+            full_answer = st.write_stream(gen)
+
+            if refs:
+                source_parts = []
+                if oa_count:
+                    source_parts.append(f"{oa_count} OpenAlex")
+                if up_count:
+                    source_parts.append(f"{up_count} uploaded")
+                label = " · ".join(source_parts)
+
+                with st.expander(f"📚 References ({len(refs)}) — {label}"):
+                    for i, ref in enumerate(refs, 1):
+                        badge = (
+                            '<span class="badge-openalex">OpenAlex</span>'
+                            if ref.source == "openalex"
+                            else '<span class="badge-upload">Uploaded</span>'
+                        )
+                        link = (f'<a href="{ref.url}" target="_blank">{ref.title}</a>'
+                                if ref.url else ref.title)
+                        st.markdown(
+                            f'<div class="ref-card">'
+                            f'[{i}] {badge} {link}<br>'
+                            f'<span style="color:#888">{ref.authors} · {ref.published} · '
+                            f'relevance: {ref.relevance_score:.2f}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": full_answer,
+            "references": [
+                {
+                    "title": r.title,
+                    "authors": r.authors,
+                    "published": r.published,
+                    "url": r.url,
+                    "source": r.source,
+                    "relevance_score": r.relevance_score,
+                }
+                for r in refs
+            ],
+        })
+
+
+# ─── Semantic Search Panel ────────────────────────────────────────────────────
+with tab_search:
+    st.title("🔍 Semantic Search")
+    st.caption(
+        "Search your knowledge base directly — no LLM, no hallucination. "
+        "See raw chunks with similarity scores. Useful for debugging retrieval quality."
+    )
+
     if get_collection(active_user_id).count() == 0:
-        st.warning("⚠️ No documents in database yet. Search OpenAlex or upload a PDF first!")
-        st.stop()
-
-    cfg = get_settings()
-    groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
-    if not groq_key:
-        st.error("Groq API key belum diisi. Isi di sidebar atau .env.")
-        st.stop()
-
-    # Show user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # Build history for Groq
-    history = [
-        {"role": m["role"], "content": m["content"]}
-        for m in st.session_state.messages[:-1]
-        if m["role"] in ("user", "assistant")
-    ]
-
-    # ── Streaming RAG response ────────────────────────────────────────────────
-    with st.chat_message("assistant"):
-        # Retrieve + build context first (fast), then stream LLM tokens
-        gen, refs, oa_count, up_count = ask_stream(
-            prompt,
-            chat_history=history,
-            groq_api_key=groq_key,
-            user_id=active_user_id,
+        st.info("⚠️ Knowledge base is empty. Ingest papers or upload PDFs first.")
+    else:
+        ss_col1, ss_col2, ss_col3 = st.columns([4, 2, 2])
+        ss_query   = ss_col1.text_input(
+            "Search query",
+            placeholder="e.g. attention mechanism self-attention",
+            key="semantic_search_query",
         )
-        # st.write_stream streams tokens in real time and returns full string
-        full_answer = st.write_stream(gen)
+        ss_top_k   = ss_col2.slider("Results", 5, 30, 15, key="semantic_search_k")
+        ss_ctype   = ss_col3.selectbox(
+            "Filter by type",
+            options=["All", "text", "table", "formula", "heading", "list", "fallback_page"],
+            key="semantic_search_type",
+        )
+        ss_min_score = st.slider(
+            "Min similarity score", 0.0, 1.0, 0.0, 0.05,
+            key="semantic_search_min_score",
+        )
 
-        # Show references after stream completes
-        if refs:
-            source_parts = []
-            if oa_count:
-                source_parts.append(f"{oa_count} OpenAlex")
-            if up_count:
-                source_parts.append(f"{up_count} uploaded")
-            label = " · ".join(source_parts)
-
-            with st.expander(f"📚 References ({len(refs)}) — {label}"):
-                for i, ref in enumerate(refs, 1):
-                    badge = (
-                        '<span class="badge-openalex">OpenAlex</span>'
-                        if ref.source == "openalex"
-                        else '<span class="badge-upload">Uploaded</span>'
+        if st.button("🔍 Search", key="semantic_search_btn", type="primary"):
+            if not ss_query.strip():
+                st.warning("Enter a search query.")
+            else:
+                with st.spinner("Searching..."):
+                    ct_filter = None if ss_ctype == "All" else ss_ctype
+                    results   = semantic_search(
+                        query               = ss_query,
+                        user_id             = active_user_id,
+                        top_k               = ss_top_k,
+                        content_type_filter = ct_filter,
+                        min_score           = ss_min_score,
                     )
-                    link = (f'<a href="{ref.url}" target="_blank">{ref.title}</a>'
-                            if ref.url else ref.title)
+
+                st.markdown(f"**{len(results)} results** for: *{ss_query}*")
+                st.divider()
+
+                for hit in results:
+                    score     = hit["score"]
+                    score_bar = int(score * 10)  # 0-10
+                    score_col = "#10b981" if score >= 0.5 else ("#f59e0b" if score >= 0.3 else "#ef4444")
+
+                    ct_label = hit["content_type"].replace("_", " ").title()
+                    page_info = f"p.{hit['page_num']}" if hit["page_num"] != "?" else ""
+                    sec_info  = f" › {hit['section_title'][:40]}" if hit["section_title"] else ""
+                    role_info = f" [{hit['chunk_role']}]" if hit.get("chunk_role") else ""
+
                     st.markdown(
-                        f'<div class="ref-card">'
-                        f'[{i}] {badge} {link}<br>'
-                        f'<span style="color:#888">{ref.authors} · {ref.published} · '
-                        f'relevance: {ref.relevance_score:.2f}</span>'
-                        f'</div>',
+                        f"""
+<div style='border:1px solid rgba(255,255,255,0.08);border-radius:8px;
+     padding:12px 16px;margin-bottom:10px;background:rgba(255,255,255,0.02)'>
+  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'>
+    <span style='font-size:12px;color:#94a3b8'>
+      📄 <b>{hit['title'][:50]}</b>&nbsp;&nbsp;
+      🏷 <code>{ct_label}</code>&nbsp;&nbsp;
+      {page_info}{sec_info}{role_info}
+    </span>
+    <span style='background:{score_col};color:white;padding:2px 8px;
+          border-radius:12px;font-size:11px;font-weight:700'>
+      {score:.3f}
+    </span>
+  </div>
+  <div style='font-size:13px;line-height:1.5;color:#e2e8f0'>{hit['text'][:500]}{'…' if len(hit['text']) > 500 else ''}</div>
+</div>""",
                         unsafe_allow_html=True,
                     )
-
-    # Save to history
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": full_answer,
-        "references": [
-            {
-                "title": r.title,
-                "authors": r.authors,
-                "published": r.published,
-                "url": r.url,
-                "source": r.source,
-                "relevance_score": r.relevance_score,
-            }
-            for r in refs
-        ],
-    })
-
-
