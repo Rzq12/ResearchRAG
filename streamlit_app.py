@@ -12,10 +12,11 @@ from app.pdf_service import ingest_pdf, list_uploaded_docs, delete_document
 from app.rag import ask, ask_stream, summarize_document, generate_query_suggestions
 from app.config import get_settings
 from app.fulltext_service import fetch_fulltext_batch
+from app.auth import init_auth_db, login_user, register_user
 
 # ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="OpenAlex RAG Chatbot",
+    page_title="ResearchRAG",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -24,6 +25,7 @@ st.set_page_config(
 # ─── Custom CSS ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* ── App styles ─────────────────────────── */
     .ref-card {
         background: #f8f9fa;
         border-left: 3px solid #4A90D9;
@@ -45,13 +47,45 @@ st.markdown("""
         font-size: 11px; font-weight: 600;
     }
     .stChatMessage { border-radius: 10px; }
+
+    /* ── Auth page styles ───────────────────── */
+    .auth-hero {
+        text-align: center;
+        padding: 2rem 0 1.5rem;
+    }
+    .auth-hero h1 {
+        font-size: 2.6rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0.3rem;
+    }
+    .auth-hero p {
+        color: #64748b;
+        font-size: 1rem;
+    }
+    .auth-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(99,102,241,0.2);
+        border-radius: 20px;
+        padding: 2rem 2.5rem;
+        box-shadow: 0 20px 60px rgba(99,102,241,0.08);
+    }
+    .auth-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(99,102,241,0.3), transparent);
+        margin: 1.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ─── Init ────────────────────────────────────────────────────────────────────
-@st.cache_resource(show_spinner="Initializing database...")
+@st.cache_resource(show_spinner="Initializing...")
 def startup():
     init_chroma()
+    init_auth_db()
     return True
 
 startup()
@@ -71,24 +105,142 @@ if "openalex_results" not in st.session_state:
 if "fulltext_pdf_urls" not in st.session_state:
     st.session_state.fulltext_pdf_urls = {}
 if "query_suggestions" not in st.session_state:
-    # list[str] of suggested questions
     st.session_state.query_suggestions = []
 if "pending_query" not in st.session_state:
     st.session_state.pending_query = None
 if "doc_summaries" not in st.session_state:
-    # dict: title -> summary text
     st.session_state.doc_summaries = {}
+# Auth state
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "current_user" not in st.session_state:
+    st.session_state.current_user = ""
+if "display_name" not in st.session_state:
+    st.session_state.display_name = ""
+
+# Pre-populate API keys from .env on fresh session
+if "groq_api_key" not in st.session_state and cfg.groq_api_key:
+    st.session_state["groq_api_key"] = cfg.groq_api_key
+if "openalex_api_key" not in st.session_state and cfg.openalex_api_key:
+    st.session_state["openalex_api_key"] = cfg.openalex_api_key
+
+
+# ─── Login / Sign-Up page ────────────────────────────────────────────────────
+def show_auth_page():
+    """Full-screen login/signup UI. Calls st.stop() implicitly via return."""
+    # Hide sidebar on auth page
+    st.markdown(
+        "<style>[data-testid='stSidebar']{display:none}</style>",
+        unsafe_allow_html=True,
+    )
+
+    _, center, _ = st.columns([1, 1.6, 1])
+    with center:
+        # Hero
+        st.markdown(
+            """
+            <div class="auth-hero">
+                <h1>🔬 ResearchRAG</h1>
+                <p>AI-powered research assistant &mdash; search, ingest &amp; ask your papers</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        tab_login, tab_signup = st.tabs(["🔑  Login", "✨  Sign Up"])
+
+        # ── Login tab ────────────────────────────────────────────────────────
+        with tab_login:
+            st.markdown('<div class="auth-divider"></div>', unsafe_allow_html=True)
+            uname_l = st.text_input(
+                "Username", key="login_username", placeholder="your_username"
+            )
+            pwd_l = st.text_input(
+                "Password", type="password", key="login_password",
+                placeholder="••••••••"
+            )
+            st.markdown("")
+            if st.button("Login  →", use_container_width=True, type="primary"):
+                if not uname_l.strip() or not pwd_l:
+                    st.error("Isi username dan password terlebih dahulu.")
+                else:
+                    ok, msg, dname = login_user(uname_l, pwd_l)
+                    if ok:
+                        st.session_state.logged_in = True
+                        st.session_state.current_user = uname_l.strip().lower()
+                        st.session_state.display_name = dname
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+        # ── Sign-up tab ──────────────────────────────────────────────────────
+        with tab_signup:
+            st.markdown('<div class="auth-divider"></div>', unsafe_allow_html=True)
+            uname_r = st.text_input(
+                "Username", key="reg_username",
+                placeholder="min. 3 karakter, huruf/angka/_",
+            )
+            dname_r = st.text_input(
+                "Display name", key="reg_displayname",
+                placeholder="Nama yang ditampilkan (opsional)",
+            )
+            pwd_r = st.text_input(
+                "Password", type="password", key="reg_password",
+                placeholder="min. 6 karakter",
+            )
+            pwd_r2 = st.text_input(
+                "Confirm password", type="password", key="reg_password2",
+                placeholder="Ulangi password",
+            )
+            st.markdown("")
+            if st.button("Buat Akun  →", use_container_width=True, type="primary"):
+                if not uname_r.strip() or not pwd_r:
+                    st.error("Username dan password wajib diisi.")
+                elif pwd_r != pwd_r2:
+                    st.error("Password dan konfirmasi tidak cocok.")
+                else:
+                    ok, msg = register_user(uname_r, dname_r, pwd_r)
+                    if ok:
+                        st.success(msg + " Silakan klik tab Login.")
+                    else:
+                        st.error(msg)
+
+        st.markdown(
+            "<br><p style='text-align:center;color:#94a3b8;font-size:0.78rem'>"
+            "Data tersimpan lokal &middot; password tidak pernah dikirim ke server eksternal</p>",
+            unsafe_allow_html=True,
+        )
+
+
+# ─── Auth gate ───────────────────────────────────────────────────────────────
+if not st.session_state.logged_in:
+    show_auth_page()
+    st.stop()
+
 
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🔬 OpenAlex RAG")
-    st.caption("Research Assistant with Citations")
-
-    user_id = st.text_input(
-        "User ID",
-        key="user_id",
-        help="Gunakan ID yang sama agar knowledge base stabil per akun.",
+    st.title("🔬 ResearchRAG")
+    # Logged-in user badge
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg,#6366f1,#8b5cf6);"
+        f"padding:8px 14px;border-radius:10px;margin-bottom:4px'>"
+        f"<span style='color:white;font-size:0.85rem'>👤 </span>"
+        f"<strong style='color:white'>{st.session_state.display_name}</strong>"
+        f"<span style='color:rgba(255,255,255,0.6);font-size:0.75rem'> @{st.session_state.current_user}</span></div>",
+        unsafe_allow_html=True,
     )
+    if st.button("🚪 Logout", use_container_width=True):
+        # Clear auth state but keep API keys
+        st.session_state.logged_in = False
+        st.session_state.current_user = ""
+        st.session_state.display_name = ""
+        st.session_state.messages = []
+        st.session_state.openalex_results = []
+        st.session_state.query_suggestions = []
+        st.session_state.doc_summaries = {}
+        st.rerun()
 
     groq_key = st.text_input(
         "Groq API key",
@@ -96,13 +248,15 @@ with st.sidebar:
         key="groq_api_key",
         help="Stored in session only. Leave empty to use .env",
     )
+    _key_in_session = bool(st.session_state.get("groq_api_key"))
+    _key_from_env   = bool(cfg.groq_api_key)
+    if _key_in_session:
+        st.caption("✅ Groq key active" + (" (from .env)" if _key_from_env and not groq_key else " (from sidebar)"))
+    else:
+        st.caption("⚠️ Groq key not set")
 
-    active_user_id = (st.session_state.get("user_id") or "").strip() or None
-    previous_user_id = st.session_state.get("active_user_id")
-    if previous_user_id and previous_user_id != active_user_id:
-        st.session_state.messages = []
-        st.session_state.openalex_results = []
-    st.session_state.active_user_id = active_user_id
+    # active_user_id comes from the logged-in user
+    active_user_id = st.session_state.current_user or None
 
     st.divider()
 
