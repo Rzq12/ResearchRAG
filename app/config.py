@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     openalex_api_key: str | None = None
     openalex_mailto: str | None = None
     top_k_openalex: int = 5
+    openalex_timeout_seconds: int = 30
+    openalex_num_retries: int = 2
+    openalex_backoff_seconds: int = 3
+
+    # Upload limits
+    max_upload_mb: int = 20
+
+    # User scoping
+    require_user_id: bool = True
 
     # RAG
     top_k_retrieval: int = 6       # chunks to retrieve from ChromaDB

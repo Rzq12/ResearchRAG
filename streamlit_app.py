@@ -55,6 +55,13 @@ def startup():
 
 startup()
 
+cfg = get_settings()
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_search_openalex(query: str, max_results: int):
+    return search_openalex(query, max_results=max_results, api_key=None)
+
 # ─── Session state ───────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -79,7 +86,7 @@ with st.sidebar:
         help="Stored in session only. Leave empty to use .env",
     )
 
-    active_user_id = st.session_state.get("user_id") or "default"
+    active_user_id = (st.session_state.get("user_id") or "").strip() or None
     previous_user_id = st.session_state.get("active_user_id")
     if previous_user_id and previous_user_id != active_user_id:
         st.session_state.messages = []
@@ -107,14 +114,22 @@ with st.sidebar:
     if st.button("🔍 Search & Ingest", use_container_width=True):
         if not search_query.strip():
             st.warning("Please enter a search query.")
+        elif cfg.require_user_id and not active_user_id:
+            st.warning("User ID wajib diisi untuk memisahkan database per akun.")
         else:
             try:
                 with st.spinner(f"Searching OpenAlex for '{search_query}'..."):
-                    works = search_openalex(
-                        search_query,
-                        max_results=int(n_results),
-                        api_key=openalex_key or None,
-                    )
+                    if openalex_key:
+                        works = search_openalex(
+                            search_query,
+                            max_results=int(n_results),
+                            api_key=openalex_key,
+                        )
+                    else:
+                        works = cached_search_openalex(
+                            search_query,
+                            max_results=int(n_results),
+                        )
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
                 if status_code == 429:
@@ -154,7 +169,20 @@ with st.sidebar:
     )
     if uploaded_files:
         if st.button("📥 Ingest PDFs", use_container_width=True):
+            if cfg.require_user_id and not active_user_id:
+                st.warning("User ID wajib diisi untuk memisahkan database per akun.")
+                st.stop()
             for f in uploaded_files:
+                size_bytes = getattr(f, "size", None)
+                if size_bytes is None:
+                    try:
+                        size_bytes = len(f.getbuffer())
+                    except Exception:
+                        size_bytes = 0
+
+                if size_bytes and size_bytes > cfg.max_upload_mb * 1024 * 1024:
+                    st.warning(f"{f.name} terlalu besar (maks {cfg.max_upload_mb} MB).")
+                    continue
                 with st.spinner(f"Processing {f.name}..."):
                     result = ingest_pdf(f.read(), f.name, user_id=active_user_id)
                 if result["chunks_added"] > 0:
@@ -223,6 +251,9 @@ for msg in st.session_state.messages:
 
 # Chat input
 if prompt := st.chat_input("Ask a research question..."):
+    if cfg.require_user_id and not active_user_id:
+        st.warning("User ID wajib diisi untuk memisahkan database per akun.")
+        st.stop()
     if get_collection(active_user_id).count() == 0:
         st.warning("⚠️ No documents in database yet. Search OpenAlex or upload a PDF first!")
         st.stop()

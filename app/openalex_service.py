@@ -1,4 +1,5 @@
 import httpx
+import time
 from dataclasses import dataclass
 from app.config import get_settings
 from app.chunker import chunk_text
@@ -53,10 +54,23 @@ def search_openalex(query: str, max_results: int = None, api_key: str | None = N
     if cfg.openalex_mailto:
         params["mailto"] = cfg.openalex_mailto
 
-    with httpx.Client(timeout=30) as client:
-        resp = client.get(cfg.openalex_base_url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    data = None
+    for attempt in range(cfg.openalex_num_retries + 1):
+        try:
+            with httpx.Client(timeout=cfg.openalex_timeout_seconds) as client:
+                resp = client.get(cfg.openalex_base_url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+            break
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code == 429 and attempt < cfg.openalex_num_retries:
+                time.sleep(cfg.openalex_backoff_seconds * (attempt + 1))
+                continue
+            raise
+
+    if data is None:
+        return []
 
     works = []
     for item in data.get("results", []):
