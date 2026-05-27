@@ -2,12 +2,12 @@ from app.chunker import extract_pdf_chunks
 from app.database import get_collection, embed_texts, make_doc_id
 
 
-def ingest_pdf(pdf_bytes: bytes, filename: str) -> dict:
+def ingest_pdf(pdf_bytes: bytes, filename: str, user_id: str | None = None) -> dict:
     """
     Ingest a user-uploaded PDF into ChromaDB.
     Returns summary of what was stored.
     """
-    collection = get_collection()
+    collection = get_collection(user_id)
 
     chunks = extract_pdf_chunks(pdf_bytes, filename=filename)
     if not chunks:
@@ -46,15 +46,15 @@ def ingest_pdf(pdf_bytes: bytes, filename: str) -> dict:
     }
 
 
-def list_uploaded_docs() -> list[dict]:
+def list_uploaded_docs(user_id: str | None = None) -> list[dict]:
     """List all documents in ChromaDB with their metadata."""
-    collection = get_collection()
+    collection = get_collection(user_id)
     results = collection.get(include=["metadatas"])
     
     seen = set()
     docs = []
     for meta in results["metadatas"]:
-        key = meta.get("arxiv_id") or meta.get("filename") or meta.get("title", "unknown")
+        key = meta.get("openalex_id") or meta.get("filename") or meta.get("title", "unknown")
         if key not in seen:
             seen.add(key)
             docs.append({
@@ -67,9 +67,9 @@ def list_uploaded_docs() -> list[dict]:
     return docs
 
 
-def delete_document(title: str) -> int:
+def delete_document(title: str, user_id: str | None = None) -> int:
     """Delete all chunks for a given document title."""
-    collection = get_collection()
+    collection = get_collection(user_id)
     results = collection.get(include=["metadatas"])
     
     ids_to_delete = [

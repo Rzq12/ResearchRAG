@@ -37,14 +37,14 @@ Rules:
 """
 
 
-def retrieve_chunks(query: str, top_k: int = None) -> tuple[list[dict], list[dict]]:
+def retrieve_chunks(query: str, top_k: int = None, user_id: str | None = None) -> tuple[list[dict], list[dict]]:
     """
     Retrieve top-k relevant chunks from ChromaDB.
     Returns (chunks, metadatas).
     """
     cfg = get_settings()
     k = top_k or cfg.top_k_retrieval
-    collection = get_collection()
+    collection = get_collection(user_id)
 
     if collection.count() == 0:
         return [], []
@@ -110,7 +110,12 @@ def format_references_for_prompt(refs: list[Reference]) -> str:
     return "\n".join(lines)
 
 
-def ask(query: str, chat_history: list[dict] = None, groq_api_key: str | None = None) -> RAGResponse:
+def ask(
+    query: str,
+    chat_history: list[dict] = None,
+    groq_api_key: str | None = None,
+    user_id: str | None = None,
+) -> RAGResponse:
     """
     Full RAG pipeline: retrieve → build context → call Groq → return answer + refs.
     """
@@ -121,7 +126,7 @@ def ask(query: str, chat_history: list[dict] = None, groq_api_key: str | None = 
     client = Groq(api_key=api_key)
 
     # 1. Retrieve
-    chunks, metadatas = retrieve_chunks(query)
+    chunks, metadatas = retrieve_chunks(query, user_id=user_id)
 
     if not chunks:
         return RAGResponse(

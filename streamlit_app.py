@@ -66,12 +66,25 @@ with st.sidebar:
     st.title("🔬 OpenAlex RAG")
     st.caption("Research Assistant with Citations")
 
+    user_id = st.text_input(
+        "User ID",
+        key="user_id",
+        help="Gunakan ID yang sama agar knowledge base stabil per akun.",
+    )
+
     groq_key = st.text_input(
         "Groq API key",
         type="password",
         key="groq_api_key",
         help="Stored in session only. Leave empty to use .env",
     )
+
+    active_user_id = st.session_state.get("user_id") or "default"
+    previous_user_id = st.session_state.get("active_user_id")
+    if previous_user_id and previous_user_id != active_user_id:
+        st.session_state.messages = []
+        st.session_state.openalex_results = []
+    st.session_state.active_user_id = active_user_id
 
     st.divider()
 
@@ -116,7 +129,7 @@ with st.sidebar:
             if works:
                 st.session_state.openalex_results = works
                 with st.spinner("Ingesting abstracts into ChromaDB..."):
-                    ingest_openalex_abstracts(works)
+                    ingest_openalex_abstracts(works, user_id=active_user_id)
                 st.success(f"✅ {len(works)} works ingested!")
             else:
                 st.error("No works found.")
@@ -143,7 +156,7 @@ with st.sidebar:
         if st.button("📥 Ingest PDFs", use_container_width=True):
             for f in uploaded_files:
                 with st.spinner(f"Processing {f.name}..."):
-                    result = ingest_pdf(f.read(), f.name)
+                    result = ingest_pdf(f.read(), f.name, user_id=active_user_id)
                 if result["chunks_added"] > 0:
                     st.success(f"✅ {f.name}: {result['chunks_added']} chunks added")
                 else:
@@ -154,8 +167,8 @@ with st.sidebar:
     # ── Knowledge Base Stats ──────────────────────────────────────────────
     st.subheader("🗄️ Knowledge Base")
     col_a, col_b = st.columns(2)
-    col_a.metric("Total Chunks", get_collection().count())
-    docs = list_uploaded_docs()
+    col_a.metric("Total Chunks", get_collection(active_user_id).count())
+    docs = list_uploaded_docs(active_user_id)
     col_b.metric("Documents", len(docs))
 
     if docs:
@@ -164,12 +177,12 @@ with st.sidebar:
                 c1, c2 = st.columns([4, 1])
                 c1.caption(f"{'📄' if doc['source']=='upload' else '📰'} {doc['title'][:40]}")
                 if c2.button("🗑️", key=f"del_{doc['title']}", help="Delete"):
-                    n = delete_document(doc["title"])
+                    n = delete_document(doc["title"], active_user_id)
                     st.success(f"Deleted {n} chunks")
                     st.rerun()
 
     if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
-        col = get_collection()
+        col = get_collection(active_user_id)
         all_ids = col.get()["ids"]
         if all_ids:
             col.delete(ids=all_ids)
@@ -210,7 +223,7 @@ for msg in st.session_state.messages:
 
 # Chat input
 if prompt := st.chat_input("Ask a research question..."):
-    if get_collection().count() == 0:
+    if get_collection(active_user_id).count() == 0:
         st.warning("⚠️ No documents in database yet. Search OpenAlex or upload a PDF first!")
         st.stop()
 
@@ -235,7 +248,12 @@ if prompt := st.chat_input("Ask a research question..."):
     # Get RAG response
     with st.chat_message("assistant"):
         with st.spinner("Searching knowledge base and thinking..."):
-            result = ask(prompt, chat_history=history, groq_api_key=groq_key)
+            result = ask(
+                prompt,
+                chat_history=history,
+                groq_api_key=groq_key,
+                user_id=active_user_id,
+            )
 
         st.markdown(result.answer)
 

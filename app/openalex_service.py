@@ -94,9 +94,9 @@ def search_openalex(query: str, max_results: int = None, api_key: str | None = N
     return works
 
 
-def ingest_openalex_abstracts(works: list[OpenAlexWork]):
+def ingest_openalex_abstracts(works: list[OpenAlexWork], user_id: str | None = None):
     """Store OpenAlex abstracts into ChromaDB for retrieval."""
-    collection = get_collection()
+    collection = get_collection(user_id)
 
     texts, ids, metadatas = [], [], []
 
