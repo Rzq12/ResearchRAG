@@ -30,11 +30,12 @@ class Settings(BaseSettings):
     require_user_id: bool = True
 
     # RAG
-    top_k_retrieval: int = 6       # chunks to retrieve from ChromaDB
-    similarity_threshold: float = 0.2  # minimum cosine similarity score to include chunk
-    max_tokens_response: int = 1500    # max tokens for LLM response
-    chunk_size: int = 800          # chars per chunk
-    chunk_overlap: int = 150       # overlap between chunks
+    top_k_retrieval: int = 15          # chunks to retrieve from ChromaDB per query
+    similarity_threshold: float = 0.2  # minimum cosine similarity score
+    max_tokens_response: int = 2000    # max tokens for LLM response
+    chunk_size: int = 1200             # chars per chunk (≈240 words)
+    chunk_overlap: int = 200           # overlap between chunks (≈40 words)
+    summarize_max_chars: int = 20000   # max chars fed to the summarizer LLM
 
     # Full-text fetching (Semantic Scholar + Unpaywall)
     fulltext_mailto: str | None = None  # email for Unpaywall polite pool (falls back to openalex_mailto)

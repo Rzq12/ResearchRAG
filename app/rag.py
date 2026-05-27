@@ -283,6 +283,15 @@ def summarize_document(
 ) -> str:
     """
     Generate a structured 5-section summary of a document from its stored chunks.
+
+    Content selection strategy (to always capture Limitations/Conclusion):
+    - Fetch ALL chunks sorted by chunk_index (document order).
+    - If total chars ≤ summarize_max_chars: use everything.
+    - Otherwise: fill from the BEGINNING until half the limit is used,
+      then fill from the END going backwards until the other half is used.
+      A separator signals any omitted middle.
+    This guarantees that both the abstract/intro AND the results/limitations
+    are always present in the summarizer context.
     """
     cfg = get_settings()
     api_key = groq_api_key or cfg.groq_api_key
@@ -291,15 +300,79 @@ def summarize_document(
     client = Groq(api_key=api_key)
 
     collection = get_collection(user_id)
-    results = collection.get(where={"title": title}, include=["documents"])
-    chunks = results.get("documents", [])
+    # Fetch documents + metadatas so we can sort by chunk_index
+    results = collection.get(
+        where={"title": title},
+        include=["documents", "metadatas"],
+    )
+    raw_chunks = results.get("documents", [])
+    raw_metas  = results.get("metadatas", []) or [{}] * len(raw_chunks)
 
-    if not chunks:
+    if not raw_chunks:
         return f"Tidak ada konten yang ditemukan untuk dokumen: **{title}**"
 
-    # Use first 6 chunks to stay within context limits (~4800 chars)
-    sample_text = "\n\n---\n\n".join(chunks[:6])
-    prompt = _SUMMARIZE_PROMPT.format(title=title, content=sample_text)
+    # Sort by chunk_index to maintain document order
+    paired = sorted(
+        zip(raw_chunks, raw_metas),
+        key=lambda x: x[1].get("chunk_index", 0) if x[1] else 0,
+    )
+    chunks = [c for c, _ in paired]
+
+    max_chars = cfg.summarize_max_chars  # default 20 000 chars
+
+    total_chars = sum(len(c) for c in chunks)
+
+    if total_chars <= max_chars:
+        # Short enough: use the full paper
+        content = "\n\n---\n\n".join(chunks)
+    else:
+        # Distribute budget: 55 % beginning, 45 % end
+        # (methods/results tend to be longer than intro)
+        budget_begin = int(max_chars * 0.55)
+        budget_end   = max_chars - budget_begin
+
+        # Build beginning section
+        begin_parts: list[str] = []
+        used = 0
+        for chunk in chunks:
+            if used + len(chunk) > budget_begin:
+                # Add partial chunk so we don't waste budget
+                remaining = budget_begin - used
+                if remaining > 100:
+                    begin_parts.append(chunk[:remaining] + " …")
+                break
+            begin_parts.append(chunk)
+            used += len(chunk)
+
+        # Build end section (walk backwards)
+        end_parts: list[str] = []
+        used = 0
+        for chunk in reversed(chunks):
+            if used + len(chunk) > budget_end:
+                remaining = budget_end - used
+                if remaining > 100:
+                    end_parts.insert(0, "… " + chunk[-remaining:])
+                break
+            end_parts.insert(0, chunk)
+            used += len(chunk)
+
+        # Detect if there is a gap between begin and end
+        n_begin = len(begin_parts)
+        n_end   = len(end_parts)
+        gap_chunks = len(chunks) - n_begin - n_end
+
+        separator = (
+            f"\n\n[... {gap_chunks} chunk(s) from middle sections omitted for length ...]\n\n"
+            if gap_chunks > 0 else "\n\n"
+        )
+
+        content = (
+            "\n\n---\n\n".join(begin_parts)
+            + separator
+            + "\n\n---\n\n".join(end_parts)
+        )
+
+    prompt = _SUMMARIZE_PROMPT.format(title=title, content=content)
 
     response = client.chat.completions.create(
         model=cfg.groq_model,
@@ -308,7 +381,7 @@ def summarize_document(
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        max_tokens=900,
+        max_tokens=1200,
     )
     return response.choices[0].message.content
 
