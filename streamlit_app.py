@@ -68,6 +68,9 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "openalex_results" not in st.session_state:
     st.session_state.openalex_results = []
+if "fulltext_pdf_urls" not in st.session_state:
+    # dict: title -> {url, source}
+    st.session_state.fulltext_pdf_urls = {}
 
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -195,16 +198,81 @@ with st.sidebar:
                             src    = f" [{d['source']}]" if d.get("source") else ""
                             chunks = f" — {d['chunks']} chunks" if d.get("chunks") else ""
                             st.caption(f"{icon} {d['title'][:60]}{src}{chunks}")
+
+                    # Store PDF URLs in session state for download links
+                    for d in ft_result["details"]:
+                        if d.get("pdf_url"):
+                            st.session_state.fulltext_pdf_urls[d["title"]] = {
+                                "url": d["pdf_url"],
+                                "source": d.get("source", ""),
+                            }
             else:
                 st.error("No works found.")
 
-    # Show last search results
+    # Show last search results + download
     if st.session_state.openalex_results:
-        with st.expander(f"📄 OpenAlex results ({len(st.session_state.openalex_results)} works)"):
-            for w in st.session_state.openalex_results:
-                st.markdown(f"**[{w.title}]({w.url})**")
-                st.caption(f"{', '.join(w.authors[:2])} · {w.published}")
-                st.write("")
+        works_res = st.session_state.openalex_results
+        with st.expander(f"📄 OpenAlex results ({len(works_res)} works)"):
+            for w in works_res:
+                col_t, col_dl = st.columns([5, 1])
+                col_t.markdown(f"**[{w.title}]({w.url})**")
+                col_t.caption(f"{', '.join(w.authors[:2])} · {w.published}")
+
+                # Full-text PDF link if available
+                ft_info = st.session_state.fulltext_pdf_urls.get(w.title)
+                if ft_info and ft_info.get("url"):
+                    col_dl.markdown(
+                        f'<a href="{ft_info["url"]}" target="_blank" '
+                        f'title="Download full-text PDF ({ft_info["source"]})">📅 PDF</a>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.divider()
+            # ── Download abstracts ────────────────────────────────────
+            import json as _json
+            # Build .txt content
+            txt_lines = []
+            for i, w in enumerate(works_res, 1):
+                txt_lines.append(f"[{i}] {w.title}")
+                if w.authors:
+                    txt_lines.append(f"Authors : {', '.join(w.authors)}")
+                txt_lines.append(f"Published: {w.published}")
+                txt_lines.append(f"URL      : {w.url}")
+                txt_lines.append(f"Abstract :\n{w.abstract}")
+                txt_lines.append("-" * 60)
+            txt_content = "\n".join(txt_lines)
+
+            # Build .json content
+            json_content = _json.dumps(
+                [
+                    {
+                        "title": w.title,
+                        "authors": w.authors,
+                        "published": w.published,
+                        "url": w.url,
+                        "abstract": w.abstract,
+                    }
+                    for w in works_res
+                ],
+                indent=2,
+                ensure_ascii=False,
+            )
+
+            dl1, dl2 = st.columns(2)
+            dl1.download_button(
+                label="⬇️ Download Abstracts (.txt)",
+                data=txt_content.encode("utf-8"),
+                file_name="abstracts.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            dl2.download_button(
+                label="⬇️ Download Abstracts (.json)",
+                data=json_content.encode("utf-8"),
+                file_name="abstracts.json",
+                mime="application/json",
+                use_container_width=True,
+            )
 
     st.divider()
 
@@ -269,12 +337,35 @@ with st.sidebar:
             col.delete(ids=all_ids)
         st.session_state.messages = []
         st.session_state.openalex_results = []
+        st.session_state.fulltext_pdf_urls = {}
         st.rerun()
 
     st.divider()
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
+
+    # ── Export chat ───────────────────────────────────────────
+    if st.session_state.messages:
+        chat_md_lines = ["# Research Assistant — Chat Export\n"]
+        for m in st.session_state.messages:
+            role_icon = "👤" if m["role"] == "user" else "🤖"
+            chat_md_lines.append(f"### {role_icon} {m['role'].capitalize()}\n")
+            chat_md_lines.append(m["content"] + "\n")
+            if m.get("references"):
+                chat_md_lines.append("**References:**\n")
+                for i, r in enumerate(m["references"], 1):
+                    link = f"[{r['title']}]({r['url']})" if r.get("url") else r["title"]
+                    chat_md_lines.append(f"{i}. {link} ({r.get('published', '')})\n")
+            chat_md_lines.append("---\n")
+        chat_md = "\n".join(chat_md_lines)
+        st.download_button(
+            label="⬇️ Export Chat (.md)",
+            data=chat_md.encode("utf-8"),
+            file_name="chat_export.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
 
 # ─── Main Chat ───────────────────────────────────────────────────────────────
 st.title("🔬 Research Assistant")
