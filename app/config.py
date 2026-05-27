@@ -1,0 +1,36 @@
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+
+class Settings(BaseSettings):
+    # Groq
+    groq_api_key: str | None = None
+    groq_model: str = "llama3-70b-8192"
+
+    # ChromaDB
+    chroma_path: str = "./data/chroma_db"
+    chroma_collection: str = "arxiv_rag"
+
+    # Embedding model (runs locally, gratis)
+    embedding_model: str = "all-MiniLM-L6-v2"
+
+    # OpenAlex search
+    openalex_base_url: str = "https://api.openalex.org/works"
+    openalex_api_key: str | None = None
+    openalex_mailto: str | None = None
+    top_k_openalex: int = 5
+
+    # RAG
+    top_k_retrieval: int = 6       # chunks to retrieve from ChromaDB
+    chunk_size: int = 800          # chars per chunk
+    chunk_overlap: int = 150       # overlap between chunks
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
