@@ -5,7 +5,13 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # Groq
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    # Default: Llama 4 Scout — 512k context, higher TPM on free tier.
+    # Switch to llama-3.1-8b-instant for fastest responses.
+    # Avoid llama-3.3-70b-versatile on free tier (12k TPM → 413 with large contexts).
+    groq_model: str = "gemini-3.5-flash"
+
+    # Google Gemini
+    gemini_api_key: str | None = None  # GEMINI_API_KEY env var
 
     # ChromaDB
     chroma_path: str = "./data/chroma_db"

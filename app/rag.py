@@ -1,4 +1,4 @@
-from groq import Groq
+from app.llm_client import call_llm, stream_llm, get_provider
 from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_texts
 from app.config import get_settings
 from dataclasses import dataclass
@@ -278,6 +278,37 @@ def _build_rag_messages(
     return messages
 
 
+def _truncate_context(
+    context: str,
+    max_tokens: int = 8000,
+    chars_per_token: int = 4,
+) -> str:
+    """
+    Trim context to stay within token budget.
+    Uses a simple char-based estimate (4 chars ≈ 1 token).
+    Removes chunks from the end (least relevant first, since build_context
+    orders by relevance descending).
+
+    Parameters
+    ----------
+    context        : full context string from build_context()
+    max_tokens     : target max tokens for the context portion
+    chars_per_token: rough approximation (OpenAI/Groq tokenizers ≈ 4 chars/token)
+    """
+    max_chars = max_tokens * chars_per_token
+    if len(context) <= max_chars:
+        return context
+
+    # Split by double-newline (chunk boundaries), trim from the end
+    parts = context.split("\n\n")
+    while parts and len("\n\n".join(parts)) > max_chars:
+        parts.pop()   # remove least-relevant chunk
+
+    trimmed = "\n\n".join(parts)
+    trimmed += "\n\n[... context truncated to fit token limit ...]" if trimmed else ""
+    return trimmed
+
+
 def _no_chunks_response(cfg, user_id: str | None) -> RAGResponse:
     """Return appropriate RAGResponse when retrieval yields no chunks."""
     collection = get_collection(user_id)
@@ -289,75 +320,91 @@ def _no_chunks_response(cfg, user_id: str | None) -> RAGResponse:
             f"(threshold similarity: {cfg.similarity_threshold}).\n\n"
             "Kemungkinan penyebab:\n"
             "- Pertanyaan terlalu jauh dari topik dokumen yang ada\n"
-            "- Coba turunkan `SIMILARITY_THRESHOLD` di `.env` (contoh: `0.1`)\n"
+            "- Coba turunkan `SIMILARITY_THRESHOLD` di `.env` (contoh: `0.05`)\n"
             "- Coba ulangi pertanyaan dalam bahasa Inggris\n"
             "- Pastikan dokumen yang relevan sudah ter-ingest"
         )
     return RAGResponse(answer=answer, references=[], openalex_papers_used=0, uploaded_docs_used=0)
 
 
-# ─── Standard (non-streaming) ask ────────────────────────────────────────────
+# ─── Standard (non-streaming) ask ─────────────────────────────────────────────────────
 
 def ask(
     query: str,
     chat_history: list[dict] = None,
-    groq_api_key: str | None = None,
+    api_key: str | None = None,       # Groq key OR Gemini key, depending on model
+    model: str | None = None,
     user_id: str | None = None,
+    # Backward-compat alias
+    groq_api_key: str | None = None,
 ) -> RAGResponse:
-    """Full RAG pipeline: retrieve → build context → call Groq → return answer + refs."""
+    """Full RAG pipeline: retrieve → build context → call LLM → return answer + refs.
+    Supports both Groq and Gemini models via the unified llm_client.
+    """
     cfg = get_settings()
-    api_key = groq_api_key or cfg.groq_api_key
-    if not api_key:
-        raise ValueError("Groq API key is required")
-    client = Groq(api_key=api_key)
+    _key         = api_key or groq_api_key or cfg.groq_api_key
+    chosen_model = model or cfg.groq_model
+    _provider    = get_provider(chosen_model)
+
+    if not _key:
+        raise ValueError(f"API key required for provider '{_provider}'.")
 
     chunks, metadatas = retrieve_chunks(query, user_id=user_id)
     if not chunks:
         return _no_chunks_response(cfg, user_id)
 
     context, refs = build_context(chunks, metadatas)
-    refs_text = format_references_for_prompt(refs)
+    # Gemini has 1M context — no need to truncate aggressively.
+    # Groq free tier: ~12k TPM — keep context under 9k tokens.
+    budget = 200_000 if _provider == "gemini" else cfg.max_tokens_response * 3
+    context = _truncate_context(context, max_tokens=budget)
+
+    refs_text      = format_references_for_prompt(refs)
     openalex_count = sum(1 for r in refs if r.source == "openalex")
-    upload_count = sum(1 for r in refs if r.source == "upload")
+    upload_count   = sum(1 for r in refs if r.source == "upload")
 
     messages = _build_rag_messages(query, context, refs_text, chat_history)
-    response = client.chat.completions.create(
-        model=cfg.groq_model,
-        messages=messages,
-        temperature=0.3,
-        max_tokens=cfg.max_tokens_response,
+    answer   = call_llm(
+        model       = chosen_model,
+        messages    = messages,
+        api_key     = _key,
+        max_tokens  = cfg.max_tokens_response,
+        temperature = 0.3,
     )
-    answer = response.choices[0].message.content
 
     return RAGResponse(
-        answer=answer,
-        references=refs,
-        openalex_papers_used=openalex_count,
-        uploaded_docs_used=upload_count,
+        answer               = answer,
+        references           = refs,
+        openalex_papers_used = openalex_count,
+        uploaded_docs_used   = upload_count,
     )
 
-
-# ─── Streaming ask ────────────────────────────────────────────────────────────
+ # ─── Streaming ask ───────────────────────────────────────────────────────────────
 
 def ask_stream(
     query: str,
     chat_history: list[dict] = None,
-    groq_api_key: str | None = None,
+    api_key: str | None = None,        # Groq key OR Gemini key, depending on model
+    model: str | None = None,
     user_id: str | None = None,
+    # Backward-compat alias
+    groq_api_key: str | None = None,
 ) -> tuple:
     """
-    Streaming RAG pipeline.
+    Streaming RAG pipeline (Groq + Gemini).
     Returns (text_generator, refs, openalex_count, upload_count).
 
     Usage in Streamlit:
         gen, refs, oa, up = ask_stream(...)
-        full_answer = st.write_stream(gen)   # streams tokens, returns full string
+        full_answer = st.write_stream(gen)
     """
     cfg = get_settings()
-    api_key = groq_api_key or cfg.groq_api_key
-    if not api_key:
-        raise ValueError("Groq API key is required")
-    client = Groq(api_key=api_key)
+    _key         = api_key or groq_api_key or cfg.groq_api_key
+    chosen_model = model or cfg.groq_model
+    _provider    = get_provider(chosen_model)
+
+    if not _key:
+        raise ValueError(f"API key required for provider '{_provider}'.")
 
     chunks, metadatas = retrieve_chunks(query, user_id=user_id)
     if not chunks:
@@ -369,26 +416,28 @@ def ask_stream(
         return _fallback_gen(), [], 0, 0
 
     context, refs = build_context(chunks, metadatas)
-    refs_text = format_references_for_prompt(refs)
+    # Gemini: 1M context — large budget. Groq free tier: conservative 9k tokens.
+    budget  = 200_000 if _provider == "gemini" else 9_000
+    context = _truncate_context(context, max_tokens=budget)
+
+    refs_text      = format_references_for_prompt(refs)
     openalex_count = sum(1 for r in refs if r.source == "openalex")
-    upload_count = sum(1 for r in refs if r.source == "upload")
+    upload_count   = sum(1 for r in refs if r.source == "upload")
 
     messages = _build_rag_messages(query, context, refs_text, chat_history)
-    stream = client.chat.completions.create(
-        model=cfg.groq_model,
-        messages=messages,
-        temperature=0.3,
-        max_tokens=cfg.max_tokens_response,
-        stream=True,
+
+    return (
+        stream_llm(
+            model       = chosen_model,
+            messages    = messages,
+            api_key     = _key,
+            max_tokens  = cfg.max_tokens_response,
+            temperature = 0.3,
+        ),
+        refs,
+        openalex_count,
+        upload_count,
     )
-
-    def _gen():
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
-
-    return _gen(), refs, openalex_count, upload_count
 
 
 # ─── Paper Summarizer ─────────────────────────────────────────────────────────
@@ -417,25 +466,29 @@ Write in the same language as the content."""
 def summarize_document(
     title: str,
     user_id: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    # backward-compat alias
     groq_api_key: str | None = None,
 ) -> str:
     """
     Generate a structured 5-section summary of a document from its stored chunks.
+    Works with Gemini or Groq — provider is auto-detected from model name.
 
     Content selection strategy (to always capture Limitations/Conclusion):
     - Fetch ALL chunks sorted by chunk_index (document order).
     - If total chars ≤ summarize_max_chars: use everything.
-    - Otherwise: fill from the BEGINNING until half the limit is used,
-      then fill from the END going backwards until the other half is used.
+    - Otherwise: fill from the BEGINNING until 55 % of the limit is used,
+      then fill from the END going backwards until the other 45 % is used.
       A separator signals any omitted middle.
     This guarantees that both the abstract/intro AND the results/limitations
     are always present in the summarizer context.
     """
     cfg = get_settings()
-    api_key = groq_api_key or cfg.groq_api_key
-    if not api_key:
-        raise ValueError("Groq API key is required")
-    client = Groq(api_key=api_key)
+    _key   = api_key or groq_api_key or cfg.groq_api_key or cfg.gemini_api_key
+    _model = model or cfg.groq_model
+    if not _key:
+        raise ValueError("API key diperlukan untuk summarize (Groq atau Gemini).")
 
     collection = get_collection(user_id)
     # Fetch documents + metadatas so we can sort by chunk_index
@@ -465,7 +518,6 @@ def summarize_document(
         content = "\n\n---\n\n".join(chunks)
     else:
         # Distribute budget: 55 % beginning, 45 % end
-        # (methods/results tend to be longer than intro)
         budget_begin = int(max_chars * 0.55)
         budget_end   = max_chars - budget_begin
 
@@ -474,7 +526,6 @@ def summarize_document(
         used = 0
         for chunk in chunks:
             if used + len(chunk) > budget_begin:
-                # Add partial chunk so we don't waste budget
                 remaining = budget_begin - used
                 if remaining > 100:
                     begin_parts.append(chunk[:remaining] + " …")
@@ -495,8 +546,8 @@ def summarize_document(
             used += len(chunk)
 
         # Detect if there is a gap between begin and end
-        n_begin = len(begin_parts)
-        n_end   = len(end_parts)
+        n_begin    = len(begin_parts)
+        n_end      = len(end_parts)
         gap_chunks = len(chunks) - n_begin - n_end
 
         separator = (
@@ -510,44 +561,40 @@ def summarize_document(
             + "\n\n---\n\n".join(end_parts)
         )
 
-    prompt = _SUMMARIZE_PROMPT.format(title=title, content=content)
+    prompt   = _SUMMARIZE_PROMPT.format(title=title, content=content)
+    messages = [
+        {"role": "system", "content": _SUMMARIZE_SYSTEM},
+        {"role": "user",   "content": prompt},
+    ]
 
-    response = client.chat.completions.create(
-        model=cfg.groq_model,
-        messages=[
-            {"role": "system", "content": _SUMMARIZE_SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
-        max_tokens=1200,
+    return call_llm(
+        model       = _model,
+        messages    = messages,
+        api_key     = _key,
+        max_tokens  = 1200,
+        temperature = 0.2,
     )
-    return response.choices[0].message.content
 
 
 # ─── Query Suggestions ────────────────────────────────────────────────────────
 
 def generate_query_suggestions(
     works_or_titles: list,
-    groq_api_key: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
     n: int = 5,
+    # backward-compat alias
+    groq_api_key: str | None = None,
 ) -> list[str]:
     """
     Generate n specific research question suggestions based on ingested works.
-
-    Parameters
-    ----------
-    works_or_titles : list
-        List of OpenAlexWork objects (with .title / .abstract) or plain title strings.
-    groq_api_key : str | None
-    n : int
-        Number of questions to generate.
+    Works with Gemini or Groq — provider auto-detected from model name.
     """
-    cfg = get_settings()
-    api_key = groq_api_key or cfg.groq_api_key
-    if not api_key:
+    cfg    = get_settings()
+    _key   = api_key or groq_api_key or cfg.groq_api_key or cfg.gemini_api_key
+    _model = model or cfg.groq_model
+    if not _key:
         return []
-
-    client = Groq(api_key=api_key)
 
     context_parts = []
     for item in works_or_titles[:6]:
@@ -555,7 +602,7 @@ def generate_query_suggestions(
             context_parts.append(f"- {item}")
         else:
             abstract = getattr(item, "abstract", "") or ""
-            snippet = abstract[:200].strip()
+            snippet  = abstract[:200].strip()
             ellipsis = "…" if len(abstract) > 200 else ""
             context_parts.append(f"- **{item.title}**: {snippet}{ellipsis}")
     context = "\n".join(context_parts)
@@ -573,16 +620,16 @@ def generate_query_suggestions(
     )
 
     try:
-        response = client.chat.completions.create(
-            model=cfg.groq_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=400,
+        raw = call_llm(
+            model       = _model,
+            messages    = [{"role": "user", "content": prompt}],
+            api_key     = _key,
+            max_tokens  = 400,
+            temperature = 0.7,
         )
-        raw = response.choices[0].message.content.strip()
         questions = []
         for line in raw.split("\n"):
-            line = line.strip()
+            line    = line.strip()
             cleaned = re.sub(r"^\d+[\.\)]\s*", "", line).strip()
             if cleaned and len(cleaned) > 15:
                 questions.append(cleaned)

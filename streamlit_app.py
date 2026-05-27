@@ -250,18 +250,68 @@ with st.sidebar:
         st.session_state.doc_summaries = {}
         st.rerun()
 
-    groq_key = st.text_input(
-        "Groq API key",
-        type="password",
-        key="groq_api_key",
-        help="Stored in session only. Leave empty to use .env",
+    # ── Model selector ────────────────────────────────────────────────────────
+    from app.llm_client import MODEL_CATALOG, PROVIDER_HINTS, get_provider
+
+    model_ids     = list(MODEL_CATALOG.keys())
+    model_labels  = [v[0] for v in MODEL_CATALOG.values()]
+
+    # Default: Gemini 3.5 Flash
+    _default_model = cfg.groq_model or "gemini-3.5-flash"
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = _default_model
+
+    _cur_model = st.session_state.selected_model
+    _cur_idx   = model_ids.index(_cur_model) if _cur_model in model_ids else 0
+
+    chosen_label = st.selectbox(
+        "🤖 LLM Model",
+        options=model_labels,
+        index=_cur_idx,
+        key="model_selector",
+        help="Gemini: butuh Google AI key. Groq: butuh Groq key.",
     )
-    _key_in_session = bool(st.session_state.get("groq_api_key"))
-    _key_from_env   = bool(cfg.groq_api_key)
-    if _key_in_session:
-        st.caption("✅ Groq key active" + (" (from .env)" if _key_from_env and not groq_key else " (from sidebar)"))
+    chosen_model = model_ids[model_labels.index(chosen_label)]
+    st.session_state.selected_model = chosen_model
+    _provider = get_provider(chosen_model)
+
+    # Hint
+    hint_icon, hint_text = PROVIDER_HINTS.get(chosen_model, ("ℹ️", ""))
+    st.caption(f"{hint_icon} {hint_text}")
+
+    st.divider()
+
+    # ── Single dynamic API key input ──────────────────────────────────────────
+    # Shows ONE field at a time — label/help/link switch based on provider.
+    # Both keys are stored separately in session_state so switching doesn't lose them.
+    if _provider == "gemini":
+        _key_ss   = "gemini_api_key"
+        _key_cfg  = cfg.gemini_api_key
+        _key_label = "🔑 Google AI API Key"
+        _key_help  = "Get free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)"
+        _key_link  = "https://aistudio.google.com/app/apikey"
     else:
-        st.caption("⚠️ Groq key not set")
+        _key_ss   = "groq_api_key"
+        _key_cfg  = cfg.groq_api_key
+        _key_label = "🔑 Groq API Key"
+        _key_help  = "Get free key at [console.groq.com](https://console.groq.com)"
+        _key_link  = "https://console.groq.com"
+
+    st.text_input(
+        _key_label,
+        type="password",
+        key=_key_ss,
+        help=_key_help,
+        placeholder="Paste your API key here…",
+    )
+    _active_api_key = st.session_state.get(_key_ss) or _key_cfg or ""
+    if _active_api_key:
+        st.caption(f"✅ Key active — [Get key]({_key_link})")
+    else:
+        st.caption(f"⚠️ Key not set — [Get key]({_key_link})")
+
+    # Store resolved key + model for use in the chat area
+    st.session_state.active_api_key = _active_api_key
 
     # active_user_id comes from the logged-in user
     active_user_id = st.session_state.current_user or None
@@ -334,12 +384,13 @@ with st.sidebar:
                         ingest_openalex_abstracts(works, user_id=active_user_id)
                     st.success(f"✅ {len(works)} abstracts ingested!")
 
-                    # Auto-generate query suggestions
-                    _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
-                    if _groq_key:
+                    # Auto-generate query suggestions using selected LLM
+                    _llm_key   = st.session_state.get("active_api_key", "")
+                    _llm_model = st.session_state.get("selected_model") or cfg.groq_model
+                    if _llm_key:
                         with st.spinner("💡 Generating query suggestions..."):
                             st.session_state.query_suggestions = generate_query_suggestions(
-                                works, groq_api_key=_groq_key
+                                works, api_key=_llm_key, model=_llm_model
                             )
 
                 # ── Full-text ingestion ────────────────────────────────────
@@ -388,8 +439,8 @@ with st.sidebar:
 
             # ── Auto-classify topics after ingest ──────────────────────────
             if works:
-                _groq_key_topic = st.session_state.get("groq_api_key") or cfg.groq_api_key
-                if _groq_key_topic:
+                _llm_key = st.session_state.get("active_api_key", "")
+                if _llm_key:
                     unclassified = [
                         w for w in works
                         if w.openalex_id not in st.session_state.topic_labels
@@ -398,7 +449,7 @@ with st.sidebar:
                         with st.spinner("🏷️ Classifying paper topics..."):
                             labels = classify_topics_batch(
                                 unclassified,
-                                groq_api_key=_groq_key_topic,
+                                groq_api_key=_llm_key,
                             )
                             st.session_state.topic_labels.update(labels)
 
@@ -567,12 +618,13 @@ with st.sidebar:
                     st.info(f"ℹ️ {f.name}: already indexed")
 
             # Generate suggestions from uploaded PDF titles
-            _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
-            if _groq_key:
+            _llm_key   = st.session_state.get("active_api_key", "")
+            _llm_model = st.session_state.get("selected_model") or cfg.groq_model
+            if _llm_key:
                 pdf_titles = [f.name.replace(".pdf", "") for f in uploaded_files]
                 with st.spinner("💡 Generating query suggestions..."):
                     st.session_state.query_suggestions = generate_query_suggestions(
-                        pdf_titles, groq_api_key=_groq_key
+                        pdf_titles, api_key=_llm_key, model=_llm_model
                     )
 
     st.divider()
@@ -593,13 +645,17 @@ with st.sidebar:
 
                 # Summarize button — stores result in session_state, shown OUTSIDE this expander
                 if c2.button("📝", key=f"sum_{doc['title']}", help="Summarize"):
-                    _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
-                    if not _groq_key:
-                        st.warning("⚠️ Groq API key diperlukan untuk summarize.")
+                    _llm_key   = st.session_state.get("active_api_key", "")
+                    _llm_model = st.session_state.get("selected_model") or cfg.groq_model
+                    if not _llm_key:
+                        st.warning("⚠️ API key diperlukan untuk summarize. Isi di sidebar.")
                     else:
                         with st.spinner(f"Summarizing {doc['title'][:30]}..."):
                             summary = summarize_document(
-                                doc["title"], user_id=active_user_id, groq_api_key=_groq_key
+                                doc["title"],
+                                user_id  = active_user_id,
+                                api_key  = _llm_key,
+                                model    = _llm_model,
                             )
                         st.session_state.doc_summaries[doc["title"]] = summary
 
@@ -731,9 +787,10 @@ with tab_chat:
             st.stop()
 
         cfg = get_settings()
-        groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
-        if not groq_key:
-            st.error("Groq API key belum diisi. Isi di sidebar atau .env.")
+        _active_key = st.session_state.get("active_api_key", "")
+        _model      = st.session_state.get("selected_model") or cfg.groq_model
+        if not _active_key:
+            st.error("API key belum diisi. Pilih model dan isi API key di sidebar.")
             st.stop()
 
         # Show user message
@@ -750,13 +807,29 @@ with tab_chat:
 
         # ── Streaming RAG response ────────────────────────────────────────────────
         with st.chat_message("assistant"):
-            gen, refs, oa_count, up_count = ask_stream(
-                prompt,
-                chat_history=history,
-                groq_api_key=groq_key,
-                user_id=active_user_id,
-            )
-            full_answer = st.write_stream(gen)
+            try:
+                gen, refs, oa_count, up_count = ask_stream(
+                    prompt,
+                    chat_history=history,
+                    api_key=_active_key,
+                    model=_model,
+                    user_id=active_user_id,
+                )
+                full_answer = st.write_stream(gen)
+            except Exception as _exc:
+                _err = str(_exc)
+                if "413" in _err or "tokens" in _err.lower() or "rate_limit" in _err.lower():
+                    full_answer = (
+                        "⚠️ **Konteks terlalu besar untuk model ini.**\n\n"
+                        f"Error: `{_err[:200]}`\n\n"
+                        "✨ **Solusi terbaik:** Pilih **Gemini 2.5 Flash** di sidebar — 1M context, gratis\n"
+                        "⚡ **Alternatif:** Llama 3.1 8B Instant (Groq) — paling cepat\n"
+                        "🔧 **Atau:** Turunkan `TOP_K_RETRIEVAL` di `.env` ke `5`"
+                    )
+                    refs, oa_count, up_count = [], 0, 0
+                    st.markdown(full_answer)
+                else:
+                    raise
 
             if refs:
                 source_parts = []
