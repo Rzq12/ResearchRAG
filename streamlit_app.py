@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from app.database import init_chroma, get_collection
 from app.openalex_service import search_openalex, ingest_openalex_abstracts
 from app.pdf_service import ingest_pdf, list_uploaded_docs, delete_document
-from app.rag import ask
+from app.rag import ask, ask_stream, summarize_document, generate_query_suggestions
 from app.config import get_settings
 from app.fulltext_service import fetch_fulltext_batch
 
@@ -69,8 +69,15 @@ if "messages" not in st.session_state:
 if "openalex_results" not in st.session_state:
     st.session_state.openalex_results = []
 if "fulltext_pdf_urls" not in st.session_state:
-    # dict: title -> {url, source}
     st.session_state.fulltext_pdf_urls = {}
+if "query_suggestions" not in st.session_state:
+    # list[str] of suggested questions
+    st.session_state.query_suggestions = []
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query = None
+if "doc_summaries" not in st.session_state:
+    # dict: title -> summary text
+    st.session_state.doc_summaries = {}
 
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -164,6 +171,14 @@ with st.sidebar:
                     with st.spinner("Ingesting abstracts into ChromaDB..."):
                         ingest_openalex_abstracts(works, user_id=active_user_id)
                     st.success(f"✅ {len(works)} abstracts ingested!")
+
+                    # Auto-generate query suggestions
+                    _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
+                    if _groq_key:
+                        with st.spinner("💡 Generating query suggestions..."):
+                            st.session_state.query_suggestions = generate_query_suggestions(
+                                works, groq_api_key=_groq_key
+                            )
 
                 # ── Full-text ingestion ────────────────────────────────────
                 if ingest_mode in ("Full-text (Open Access)", "Both"):
@@ -311,6 +326,15 @@ with st.sidebar:
                 else:
                     st.info(f"ℹ️ {f.name}: already indexed")
 
+            # Generate suggestions from uploaded PDF titles
+            _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
+            if _groq_key:
+                pdf_titles = [f.name.replace(".pdf", "") for f in uploaded_files]
+                with st.spinner("💡 Generating query suggestions..."):
+                    st.session_state.query_suggestions = generate_query_suggestions(
+                        pdf_titles, groq_api_key=_groq_key
+                    )
+
     st.divider()
 
     # ── Knowledge Base Stats ──────────────────────────────────────────────
@@ -323,12 +347,39 @@ with st.sidebar:
     if docs:
         with st.expander("Manage documents"):
             for doc in docs[:20]:
-                c1, c2 = st.columns([4, 1])
-                c1.caption(f"{'📄' if doc['source']=='upload' else '📰'} {doc['title'][:40]}")
-                if c2.button("🗑️", key=f"del_{doc['title']}", help="Delete"):
+                icon = "📄" if doc["source"] == "upload" else "📰"
+                c1, c2, c3 = st.columns([4, 1, 1])
+                c1.caption(f"{icon} {doc['title'][:38]}")
+
+                # Summarize button — stores result in session_state, shown OUTSIDE this expander
+                if c2.button("📝", key=f"sum_{doc['title']}", help="Summarize"):
+                    _groq_key = st.session_state.get("groq_api_key") or cfg.groq_api_key
+                    if not _groq_key:
+                        st.warning("⚠️ Groq API key diperlukan untuk summarize.")
+                    else:
+                        with st.spinner(f"Summarizing {doc['title'][:30]}..."):
+                            summary = summarize_document(
+                                doc["title"], user_id=active_user_id, groq_api_key=_groq_key
+                            )
+                        st.session_state.doc_summaries[doc["title"]] = summary
+
+                # Delete button
+                if c3.button("🗑️", key=f"del_{doc['title']}", help="Delete"):
                     n = delete_document(doc["title"], active_user_id)
+                    # Also clear any cached summary for this doc
+                    st.session_state.doc_summaries.pop(doc["title"], None)
                     st.success(f"Deleted {n} chunks")
                     st.rerun()
+
+        # ── Show doc summaries OUTSIDE the Manage expander (no nesting) ──────────
+        for title, summary_text in st.session_state.doc_summaries.items():
+            st.markdown(f"📝 **Summary: {title[:50]}**")
+            st.markdown(summary_text)
+            if st.button("❌ Close summary", key=f"close_sum_{title}"):
+                st.session_state.doc_summaries.pop(title, None)
+                st.rerun()
+            st.divider()
+
 
     if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
         col = get_collection(active_user_id)
@@ -338,6 +389,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.openalex_results = []
         st.session_state.fulltext_pdf_urls = {}
+        st.session_state.query_suggestions = []
         st.rerun()
 
     st.divider()
@@ -371,6 +423,22 @@ with st.sidebar:
 st.title("🔬 Research Assistant")
 st.caption("Ask questions about your papers. I'll answer with citations from OpenAlex and uploaded PDFs.")
 
+# ── Query Suggestions ─────────────────────────────────────────────────────────
+if st.session_state.query_suggestions:
+    st.markdown("**💡 Suggested questions** *(click to ask)*")
+    cols = st.columns(min(len(st.session_state.query_suggestions), 3))
+    for i, suggestion in enumerate(st.session_state.query_suggestions):
+        col = cols[i % 3]
+        if col.button(
+            suggestion,
+            key=f"suggestion_{i}",
+            use_container_width=True,
+            help="Click to ask this question",
+        ):
+            st.session_state.pending_query = suggestion
+            st.rerun()
+    st.divider()
+
 # Display chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -393,8 +461,17 @@ for msg in st.session_state.messages:
                         unsafe_allow_html=True,
                     )
 
-# Chat input
-if prompt := st.chat_input("Ask a research question..."):
+# ── Chat Input (typed or from suggestion button) ──────────────────────────────
+typed_input = st.chat_input("Ask a research question...")
+
+# Consume pending query from suggestion click (one shot)
+if st.session_state.pending_query:
+    prompt = st.session_state.pending_query
+    st.session_state.pending_query = None
+else:
+    prompt = typed_input
+
+if prompt:
     if cfg.require_user_id and not active_user_id:
         st.warning("User ID wajib diisi untuk memisahkan database per akun.")
         st.stop()
@@ -413,36 +490,36 @@ if prompt := st.chat_input("Ask a research question..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Build history for Groq (exclude references metadata)
+    # Build history for Groq
     history = [
         {"role": m["role"], "content": m["content"]}
         for m in st.session_state.messages[:-1]
         if m["role"] in ("user", "assistant")
     ]
 
-    # Get RAG response
+    # ── Streaming RAG response ────────────────────────────────────────────────
     with st.chat_message("assistant"):
-        with st.spinner("Searching knowledge base and thinking..."):
-            result = ask(
-                prompt,
-                chat_history=history,
-                groq_api_key=groq_key,
-                user_id=active_user_id,
-            )
+        # Retrieve + build context first (fast), then stream LLM tokens
+        gen, refs, oa_count, up_count = ask_stream(
+            prompt,
+            chat_history=history,
+            groq_api_key=groq_key,
+            user_id=active_user_id,
+        )
+        # st.write_stream streams tokens in real time and returns full string
+        full_answer = st.write_stream(gen)
 
-        st.markdown(result.answer)
+        # Show references after stream completes
+        if refs:
+            source_parts = []
+            if oa_count:
+                source_parts.append(f"{oa_count} OpenAlex")
+            if up_count:
+                source_parts.append(f"{up_count} uploaded")
+            label = " · ".join(source_parts)
 
-        # Show references
-        if result.references:
-            source_summary = []
-            if result.openalex_papers_used:
-                source_summary.append(f"{result.openalex_papers_used} OpenAlex")
-            if result.uploaded_docs_used:
-                source_summary.append(f"{result.uploaded_docs_used} uploaded")
-            label = " · ".join(source_summary)
-
-            with st.expander(f"📚 References ({len(result.references)}) — {label}"):
-                for i, ref in enumerate(result.references, 1):
+            with st.expander(f"📚 References ({len(refs)}) — {label}"):
+                for i, ref in enumerate(refs, 1):
                     badge = (
                         '<span class="badge-openalex">OpenAlex</span>'
                         if ref.source == "openalex"
@@ -462,7 +539,7 @@ if prompt := st.chat_input("Ask a research question..."):
     # Save to history
     st.session_state.messages.append({
         "role": "assistant",
-        "content": result.answer,
+        "content": full_answer,
         "references": [
             {
                 "title": r.title,
@@ -472,6 +549,8 @@ if prompt := st.chat_input("Ask a research question..."):
                 "source": r.source,
                 "relevance_score": r.relevance_score,
             }
-            for r in result.references
+            for r in refs
         ],
     })
+
+
