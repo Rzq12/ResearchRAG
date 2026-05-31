@@ -1,0 +1,27 @@
+name: Keep HF Space Alive
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+    # Ganti ke '*/15 * * * *' untuk setiap 15 menit
+  workflow_dispatch:
+
+jobs:
+  ping-hf-space:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 🏓 Ping HF Space
+        run: |
+          echo "⏰ $(date -u)"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 60 \
+            "${{ secrets.HF_SPACE_URL }}")
+          echo "HTTP Status: $STATUS"
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then
+            echo "✅ Space is alive!"
+          else
+            echo "❌ Space returned: $STATUS"
+            exit 1
+          fi
