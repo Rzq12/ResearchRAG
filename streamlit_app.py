@@ -16,7 +16,7 @@ from app.auth import init_auth_db, login_user, register_user
 from app.semantic_search import semantic_search
 from app.topic_classifier import classify_topics_batch, topic_badge_html, RESEARCH_TOPICS
 
-# ─── Page config ────────────────────────────────────────────────────────────
+# ─── Page config ───────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="ResearchRAG",
     page_icon="🔬",
