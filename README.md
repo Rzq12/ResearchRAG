@@ -31,10 +31,15 @@ AI-powered research assistant — cari, ingest, dan tanya paper ilmiah menggunak
 | **RAG**           | Streaming jawaban token-by-token (tidak perlu nunggu spinner)                          |
 | **RAG**           | Multi-turn conversation dengan chat history                                            |
 | **RAG**           | Parent-Child retrieval — embed child chunk kecil, kirim parent chunk besar ke LLM      |
-| **RAG**           | Similarity threshold — chunk tidak relevan difilter sebelum masuk LLM                  |
-| **RAG**           | Sitasi `[1]`, `[2]` per jawaban dengan relevance score                                 |
-| **RAG**           | Cross-encoder reranker _(opsional, ~80MB)_ untuk meningkatkan kualitas retrieval       |
-| **LLM**           | Dual provider: **Groq** (Llama 4, Llama 3, Qwen, GPT OSS) & **Google Gemini**         |
+| **RAG**           | **Multilingual embedding** (`multilingual-e5-base`) — query Indonesia menemukan paper Inggris |
+| **RAG**           | **HyDE** — LLM menulis 2 abstrak hipotetis sebagai query retrieval tambahan            |
+| **RAG**           | **Hybrid retrieval** — BM25 (keyword/akronim) + vector search, fusi RRF (0.4/0.6)      |
+| **RAG**           | **Reranker multilingual** (mMARCO cross-encoder), skor sigmoid [0,1], ON by default    |
+| **RAG**           | **Relevance threshold + fallback** — KB tidak relevan → OpenAlex live → DuckDuckGo     |
+| **RAG**           | **Reasoning `<think>`** — model bernalar dulu, tampil sebagai blok collapsible          |
+| **RAG**           | Metadata filtering — filter retrieval per dokumen / section / tahun dari sidebar        |
+| **RAG**           | Sitasi `[1]`, `[2]` per jawaban dengan relevance score + sitasi akademik (author, tahun, section) |
+| **LLM**           | Triple provider: **Groq**, **Google Gemini**, & **self-hosted** (`hf:` — vLLM/TGI untuk model fine-tuned sendiri) |
 | **Produktivitas** | 💡 Query suggestions — 5 pertanyaan otomatis setelah ingest                            |
 | **Produktivitas** | 📝 Paper summarizer — ringkasan 5-seksi per dokumen                                    |
 | **Produktivitas** | 🏷️ Topic classifier — label otomatis per paper (ML, NLP, CV, RAG, dll)                |
@@ -69,30 +74,54 @@ User (login) ──► Auth Gate (SQLite)
      [embedded]            [sent to LLM]
                      │
          [Sentence Transformer]
-         all-MiniLM-L6-v2 (local)
+   intfloat/multilingual-e5-base (local)
+   prefix "passage:" / "query:" wajib
                      │
                      ▼
-              [ChromaDB] ← per-user collection
-          (cosine similarity, threshold filter)
+              [ChromaDB] ← per-user collection (v2)
                      │
-               Top-K Child Chunks
-                     │
+      Query ─► [HyDE] LLM menulis 2 abstrak hipotetis
+                     │  (query asli + hipotetis di-embed semua)
           ┌──────────┴──────────┐
           │                     │
-  [Cross-Encoder Reranker]  (skip if disabled)
-  ms-marco-MiniLM-L-6-v2
-          │
-          ▼
-     Parent Chunks fetched
+   Vector Search           BM25 Keyword
+   (semantic)              (akronim, nama author)
+          └───────RRF 0.6/0.4───┘
+                     │
+  [Cross-Encoder Reranker — multilingual]
+  mmarco-mMiniLMv2 · sigmoid → skor [0,1]
+                     │
+        skor Top-1 ≥ 0.5 ?
+        ├─ ya  → Parent Chunks fetched (KB lokal)
+        └─ tidak → fallback: OpenAlex live → DuckDuckGo
                      │
                      ▼
        [LLM — streaming]
        Groq (Llama / Qwen / GPT OSS)
     OR Google Gemini (Flash / Pro)
+    OR self-hosted "hf:" (vLLM / TGI)
                      │
+       <think> reasoning </think>
                      ▼
         Answer + Citations [1][2]
 ```
+
+### 📏 Hasil evaluasi retrieval (30 query EN/ID/campur, `eval/`)
+
+| Metrik | Baseline (MiniLM) | Final (e5 + hybrid + reranker) |
+| --- | --- | --- |
+| hit@1 | 0.60 | **0.97** |
+| MRR@10 | 0.725 | **0.983** |
+| MRR@10 (query Indonesia) | 0.475 | **1.00** |
+| Latensi retrieval p95 (CPU) | 24 ms | 1.7 s |
+
+Reproduksi: `python -m eval.run_eval --tag saya --compare eval/results/baseline.json`
+Test case wajib (perlu API key): `python -m eval.test_case`
+
+> ⚠️ **Migrasi dari versi lama:** embedding berubah 384-dim → 768-dim, koleksi
+> ChromaDB lama tidak kompatibel. Data lama bisa dimigrasi tanpa hilang:
+> `python -m scripts.reindex --apply` (teks chunk tersimpan di Chroma, jadi
+> re-embed dilakukan dari data yang ada).
 
 ---
 

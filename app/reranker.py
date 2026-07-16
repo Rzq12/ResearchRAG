@@ -1,29 +1,34 @@
 """
 Cross-encoder reranker for ResearchRAG.
 
-Uses sentence-transformers CrossEncoder to rerank retrieved child chunks
-before the parent chunks are fetched and sent to the LLM.
+Re-scores retrieval candidates against the ORIGINAL query before parent
+chunks are fetched and sent to the LLM.
 
-Model: cross-encoder/ms-marco-MiniLM-L-6-v2
-  - Size: ~80 MB (downloaded once, cached by sentence-transformers)
-  - Latency: ~50ms for 30 candidates on CPU
-  - No GPU required
+Model: BAAI/bge-reranker-base (multilingual, XLM-R based) — handles the
+Indonesian/English/code-switching queries this app serves. Raw logits are
+sigmoid-normalized to [0,1] so the top-1 score can be compared against
+cfg.relevance_threshold (the notebook pattern: threshold → web fallback).
 
-Enable via config: ENABLE_RERANKER=true
+Enable via config: ENABLE_RERANKER=true (default on).
 """
 
 from __future__ import annotations
 
-_cross_encoder = None
+import math
+
+_cross_encoders: dict[str, object] = {}
 
 
 def _get_cross_encoder(model_name: str):
-    global _cross_encoder
-    if _cross_encoder is None:
+    if model_name not in _cross_encoders:
         from sentence_transformers import CrossEncoder
         print(f"[Reranker] Loading {model_name}...")
-        _cross_encoder = CrossEncoder(model_name)
-    return _cross_encoder
+        _cross_encoders[model_name] = CrossEncoder(model_name, max_length=512)
+    return _cross_encoders[model_name]
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 def rerank(
@@ -45,7 +50,7 @@ def rerank(
     Returns
     -------
     Reranked and truncated list of chunk dicts, highest score first.
-    Each dict gets a new "_rerank_score" key.
+    Each dict gets a new "_rerank_score" key, sigmoid-normalized to [0,1].
     """
     if not chunks:
         return []
@@ -53,10 +58,10 @@ def rerank(
     encoder = _get_cross_encoder(model_name)
 
     pairs  = [(query, c["text"]) for c in chunks]
-    scores = encoder.predict(pairs).tolist()
+    logits = encoder.predict(pairs).tolist()
 
-    for chunk, score in zip(chunks, scores):
-        chunk["_rerank_score"] = round(float(score), 4)
+    for chunk, logit in zip(chunks, logits):
+        chunk["_rerank_score"] = round(_sigmoid(float(logit)), 4)
 
     ranked = sorted(chunks, key=lambda c: c["_rerank_score"], reverse=True)
     return ranked[:top_k]

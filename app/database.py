@@ -135,8 +135,27 @@ def get_parents_by_ids(
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    return get_embedder().encode(texts, show_progress_bar=False).tolist()
+def embed_documents(texts: list[str]) -> list[list[float]]:
+    """Embed passages for indexing. e5 models need the 'passage: ' prefix."""
+    prefix = get_settings().embedding_passage_prefix
+    return get_embedder().encode(
+        [f"{prefix}{t}" for t in texts],
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    ).tolist()
+
+
+def embed_query(text: str) -> list[float]:
+    """Embed a search query. e5 models need the 'query: ' prefix."""
+    prefix = get_settings().embedding_query_prefix
+    return get_embedder().encode(
+        f"{prefix}{text}",
+        normalize_embeddings=True,
+    ).tolist()
+
+
+# Backward-compat alias — all remaining callers embed documents.
+embed_texts = embed_documents
 
 
 def make_doc_id(source: str, chunk_index: int) -> str:

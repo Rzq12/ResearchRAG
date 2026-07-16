@@ -8,4 +8,17 @@ dist/
 .venv/
 venv/
 .DS_Store
+Thumbs.db
 *.log
+
+# Auth database — berisi hash password user, jangan pernah commit
+data/*.db
+
+# Cache tooling test
+.pytest_cache/
+
+# Hasil eval: run ad-hoc tetap lokal; baseline & final di-commit sebagai
+# angka pembanding yang dirujuk README/PLAN
+eval/results/*
+!eval/results/baseline.json
+!eval/results/final-retrieval.json

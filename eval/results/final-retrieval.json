@@ -1,0 +1,777 @@
+{
+  "tag": "final-retrieval",
+  "timestamp": "2026-07-16T07:13:26+00:00",
+  "config": {
+    "embedding_model": "intfloat/multilingual-e5-base",
+    "enable_reranker": true,
+    "reranker_model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+    "reranker_top_k": 5,
+    "top_k_retrieval": 15,
+    "similarity_threshold": 0.1,
+    "enable_bm25": true,
+    "bm25_weight": 0.4,
+    "vector_weight": 0.6,
+    "enable_hyde": false,
+    "hyde_num_hypotheticals": 2,
+    "relevance_threshold": 0.5,
+    "enable_web_fallback": true,
+    "enable_reasoning": true
+  },
+  "metrics": {
+    "n_queries": 30,
+    "hit@1": 0.9667,
+    "hit@5": 1.0,
+    "mrr@10": 0.9833,
+    "latency_p50_ms": 1253.8,
+    "latency_p95_ms": 1677.5,
+    "by_language": {
+      "en": {
+        "n": 15,
+        "hit@1": 0.9333,
+        "hit@5": 1.0,
+        "mrr@10": 0.9667
+      },
+      "id": {
+        "n": 10,
+        "hit@1": 1.0,
+        "hit@5": 1.0,
+        "mrr@10": 1.0
+      },
+      "mixed": {
+        "n": 5,
+        "hit@1": 1.0,
+        "hit@5": 1.0,
+        "mrr@10": 1.0
+      }
+    }
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1251.3,
+      "retrieved": [
+        "transformer",
+        "vit",
+        "ner-id",
+        "qa-id",
+        "bert",
+        "lora",
+        "gpt3",
+        "dpr",
+        "colbert",
+        "sentimen-id"
+      ],
+      "expected": [
+        "transformer"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q02",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1460.6,
+      "retrieved": [
+        "bert",
+        "colbert",
+        "sentimen-id",
+        "ner-id",
+        "sbert",
+        "qa-id",
+        "vit",
+        "rag",
+        "lora",
+        "transformer"
+      ],
+      "expected": [
+        "bert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q03",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1266.4,
+      "retrieved": [
+        "rag",
+        "qa-id",
+        "ner-id",
+        "gpt3",
+        "hyde",
+        "dpr",
+        "colbert",
+        "sbert",
+        "transformer",
+        "sentimen-id"
+      ],
+      "expected": [
+        "rag"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q04",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1180.3,
+      "retrieved": [
+        "dpr",
+        "qa-id",
+        "rag",
+        "bert",
+        "gpt3",
+        "ner-id",
+        "sentimen-id",
+        "colbert",
+        "sbert",
+        "hyde"
+      ],
+      "expected": [
+        "dpr"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q05",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1218.1,
+      "retrieved": [
+        "gpt3",
+        "sentimen-id",
+        "sbert",
+        "qa-id",
+        "bert",
+        "vit",
+        "transformer",
+        "hyde",
+        "ner-id",
+        "colbert"
+      ],
+      "expected": [
+        "gpt3"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q06",
+      "language": "en",
+      "hit@1": 0.0,
+      "hit@5": 1.0,
+      "rr@10": 0.5,
+      "latency_ms": 1213.5,
+      "retrieved": [
+        "qlora",
+        "lora",
+        "bert",
+        "gpt3",
+        "sentimen-id",
+        "hyde",
+        "qa-id",
+        "ner-id",
+        "sbert",
+        "colbert"
+      ],
+      "expected": [
+        "lora"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q07",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1137.5,
+      "retrieved": [
+        "qlora",
+        "lora",
+        "qa-id",
+        "ner-id",
+        "gpt3",
+        "dpr",
+        "transformer",
+        "bert",
+        "sbert",
+        "rag"
+      ],
+      "expected": [
+        "qlora"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q08",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1309.3,
+      "retrieved": [
+        "hyde",
+        "dpr",
+        "rag",
+        "qa-id",
+        "colbert",
+        "ner-id",
+        "gpt3",
+        "bert",
+        "sentimen-id",
+        "transformer"
+      ],
+      "expected": [
+        "hyde"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q09",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1174.1,
+      "retrieved": [
+        "colbert",
+        "sentimen-id",
+        "qa-id",
+        "sbert",
+        "ner-id",
+        "lora",
+        "bert",
+        "transformer",
+        "gpt3",
+        "rag"
+      ],
+      "expected": [
+        "colbert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q10",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1217.6,
+      "retrieved": [
+        "sbert",
+        "sentimen-id",
+        "bert",
+        "colbert",
+        "ner-id",
+        "qa-id",
+        "vit",
+        "rag",
+        "dpr",
+        "hyde"
+      ],
+      "expected": [
+        "bert",
+        "sbert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q11",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1207.5,
+      "retrieved": [
+        "vit",
+        "transformer",
+        "bert",
+        "lora",
+        "qa-id",
+        "ner-id",
+        "gpt3",
+        "colbert",
+        "sentimen-id",
+        "rag"
+      ],
+      "expected": [
+        "vit"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q12",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1427.4,
+      "retrieved": [
+        "qlora",
+        "lora",
+        "gpt3",
+        "sentimen-id",
+        "rag",
+        "bert",
+        "hyde",
+        "ner-id",
+        "qa-id",
+        "transformer"
+      ],
+      "expected": [
+        "lora",
+        "qlora"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q13",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1402.6,
+      "retrieved": [
+        "colbert",
+        "qa-id",
+        "ner-id",
+        "rag",
+        "dpr",
+        "hyde",
+        "sentimen-id",
+        "transformer",
+        "lora",
+        "qlora"
+      ],
+      "expected": [
+        "colbert",
+        "sbert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q14",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1753.0,
+      "retrieved": [
+        "qa-id",
+        "rag",
+        "dpr",
+        "hyde",
+        "gpt3",
+        "ner-id",
+        "colbert",
+        "transformer",
+        "sbert",
+        "bert"
+      ],
+      "expected": [
+        "qa-id",
+        "rag"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q15",
+      "language": "en",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1463.7,
+      "retrieved": [
+        "gpt3",
+        "lora",
+        "sentimen-id",
+        "qlora",
+        "bert",
+        "qa-id",
+        "ner-id",
+        "transformer",
+        "hyde",
+        "sbert"
+      ],
+      "expected": [
+        "gpt3"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q16",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1346.8,
+      "retrieved": [
+        "transformer",
+        "lora",
+        "bert",
+        "vit",
+        "hyde",
+        "rag",
+        "dpr",
+        "gpt3",
+        "sbert",
+        "colbert"
+      ],
+      "expected": [
+        "transformer"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q17",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1530.9,
+      "retrieved": [
+        "sentimen-id",
+        "sbert",
+        "ner-id",
+        "bert",
+        "colbert",
+        "transformer",
+        "gpt3",
+        "qa-id",
+        "dpr",
+        "rag"
+      ],
+      "expected": [
+        "sentimen-id"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q18",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1211.2,
+      "retrieved": [
+        "ner-id",
+        "qa-id",
+        "colbert",
+        "bert",
+        "sbert",
+        "dpr",
+        "gpt3",
+        "transformer",
+        "rag",
+        "qlora"
+      ],
+      "expected": [
+        "ner-id"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q19",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1224.3,
+      "retrieved": [
+        "qa-id",
+        "dpr",
+        "sbert",
+        "gpt3",
+        "rag",
+        "hyde",
+        "lora",
+        "qlora",
+        "transformer",
+        "ner-id"
+      ],
+      "expected": [
+        "qa-id"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q20",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1152.8,
+      "retrieved": [
+        "gpt3",
+        "bert",
+        "hyde",
+        "transformer",
+        "sbert",
+        "vit",
+        "lora",
+        "qa-id",
+        "qlora",
+        "colbert"
+      ],
+      "expected": [
+        "gpt3"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q21",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1243.2,
+      "retrieved": [
+        "qlora",
+        "hyde",
+        "gpt3",
+        "lora",
+        "bert",
+        "sentimen-id",
+        "sbert",
+        "rag",
+        "colbert",
+        "dpr"
+      ],
+      "expected": [
+        "lora",
+        "qlora"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q22",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1159.5,
+      "retrieved": [
+        "ner-id",
+        "hyde",
+        "dpr",
+        "sbert",
+        "colbert",
+        "gpt3",
+        "rag",
+        "bert",
+        "transformer",
+        "qlora"
+      ],
+      "expected": [
+        "ner-id"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q23",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1358.3,
+      "retrieved": [
+        "sbert",
+        "colbert",
+        "hyde",
+        "dpr",
+        "lora",
+        "bert",
+        "vit",
+        "gpt3",
+        "qa-id",
+        "transformer"
+      ],
+      "expected": [
+        "sbert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q24",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1677.5,
+      "retrieved": [
+        "vit",
+        "transformer",
+        "bert",
+        "lora",
+        "rag",
+        "gpt3",
+        "hyde",
+        "colbert",
+        "dpr",
+        "ner-id"
+      ],
+      "expected": [
+        "vit"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q25",
+      "language": "id",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1225.3,
+      "retrieved": [
+        "rag",
+        "dpr",
+        "sbert",
+        "gpt3",
+        "hyde",
+        "bert",
+        "qa-id",
+        "qlora",
+        "transformer",
+        "lora"
+      ],
+      "expected": [
+        "rag"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q26",
+      "language": "mixed",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1256.3,
+      "retrieved": [
+        "lora",
+        "qlora",
+        "gpt3",
+        "hyde",
+        "rag",
+        "transformer",
+        "bert",
+        "vit",
+        "colbert",
+        "dpr"
+      ],
+      "expected": [
+        "lora"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q27",
+      "language": "mixed",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1233.7,
+      "retrieved": [
+        "hyde",
+        "bert",
+        "qa-id",
+        "colbert",
+        "dpr",
+        "rag",
+        "transformer",
+        "vit",
+        "gpt3",
+        "lora"
+      ],
+      "expected": [
+        "hyde"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q28",
+      "language": "mixed",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1261.3,
+      "retrieved": [
+        "dpr",
+        "qa-id",
+        "hyde",
+        "rag",
+        "sbert",
+        "colbert",
+        "lora",
+        "qlora",
+        "gpt3",
+        "ner-id"
+      ],
+      "expected": [
+        "dpr",
+        "qa-id"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q29",
+      "language": "mixed",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1340.1,
+      "retrieved": [
+        "bert",
+        "sbert",
+        "hyde",
+        "sentimen-id",
+        "vit",
+        "gpt3",
+        "colbert",
+        "lora",
+        "ner-id",
+        "transformer"
+      ],
+      "expected": [
+        "bert"
+      ],
+      "n_chunks": 14
+    },
+    {
+      "id": "q30",
+      "language": "mixed",
+      "hit@1": 1.0,
+      "hit@5": 1.0,
+      "rr@10": 1.0,
+      "latency_ms": 1449.8,
+      "retrieved": [
+        "ner-id",
+        "qa-id",
+        "hyde",
+        "colbert",
+        "sbert",
+        "rag",
+        "gpt3",
+        "bert",
+        "dpr",
+        "transformer"
+      ],
+      "expected": [
+        "ner-id",
+        "qa-id"
+      ],
+      "n_chunks": 14
+    }
+  ]
+}

@@ -87,6 +87,7 @@ class DocumentChunk:
             "content_type":  self.content_type,
             "section_path":  self.section_path,
             "section_title": self.section_title,
+            "section_label": section_label(self.section_title, self.section_path),
             "word_count":    self.word_count,
             "parent_id":     self.parent_id or "",
         }
@@ -103,6 +104,32 @@ class CoverageReport(NamedTuple):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+# Canonical academic-section labels (the domain analogue of the legal
+# notebook's pasal/BAB metadata). Multilingual: English + Indonesian headings.
+# Order matters — first match wins, checked against title then path.
+_SECTION_LABEL_PATTERNS: list[tuple[str, "re.Pattern"]] = [
+    ("abstract",     re.compile(r"abstract|abstrak|ringkasan", re.IGNORECASE)),
+    ("introduction", re.compile(r"introduction|pendahuluan|latar belakang|\bbackground\b", re.IGNORECASE)),
+    ("related_work", re.compile(r"related work|literature review|tinjauan pustaka|kajian pustaka", re.IGNORECASE)),
+    ("methods",      re.compile(r"method|metode|metodologi|approach|pendekatan|materials|experimental setup", re.IGNORECASE)),
+    ("results",      re.compile(r"result|hasil|finding|temuan|experiment|eksperimen|evaluation|evaluasi", re.IGNORECASE)),
+    ("discussion",   re.compile(r"discussion|pembahasan|diskusi|analysis|analisis", re.IGNORECASE)),
+    ("conclusion",   re.compile(r"conclusion|kesimpulan|penutup|\bsummary\b|future work", re.IGNORECASE)),
+    ("references",   re.compile(r"references|bibliography|daftar pustaka", re.IGNORECASE)),
+]
+
+
+def section_label(section_title: str, section_path: str = "") -> str:
+    """Map a free-form heading to a canonical section label ('other' if unknown)."""
+    for text in (section_title, section_path):
+        if not text:
+            continue
+        for label, pattern in _SECTION_LABEL_PATTERNS:
+            if pattern.search(text):
+                return label
+    return "other"
+
 
 _FORMULA_PATTERN = re.compile(
     r"[∑∫∏∂∇∆√±×÷≤≥≠≈∞αβγδεζηθιλμνξπρστφχψω]"

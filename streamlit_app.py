@@ -256,6 +256,13 @@ with st.sidebar:
     model_ids     = list(MODEL_CATALOG.keys())
     model_labels  = [v[0] for v in MODEL_CATALOG.values()]
 
+    # Self-hosted model (own fine-tuned model behind an OpenAI-compatible
+    # endpoint) — shown only when configured in .env.
+    if cfg.hf_endpoint_url and cfg.hf_model_name:
+        _hf_id = f"hf:{cfg.hf_model_name}"
+        model_ids.append(_hf_id)
+        model_labels.append(f"🏠 {cfg.hf_model_name} (self-hosted)")
+
     # Default: Gemini 3.5 Flash
     _default_model = cfg.groq_model or "gemini-3.5-flash"
     if "selected_model" not in st.session_state:
@@ -284,7 +291,13 @@ with st.sidebar:
     # ── Single dynamic API key input ──────────────────────────────────────────
     # Shows ONE field at a time — label/help/link switch based on provider.
     # Both keys are stored separately in session_state so switching doesn't lose them.
-    if _provider == "gemini":
+    if _provider == "hf":
+        _key_ss   = "hf_api_token"
+        _key_cfg  = cfg.hf_api_token or "local"   # self-hosted often needs no key
+        _key_label = "🔑 Endpoint token (optional)"
+        _key_help  = "Bearer token untuk endpoint self-hosted (kosongkan bila tidak perlu)"
+        _key_link  = cfg.hf_endpoint_url or ""
+    elif _provider == "gemini":
         _key_ss   = "gemini_api_key"
         _key_cfg  = cfg.gemini_api_key
         _key_label = "🔑 Google AI API Key"
@@ -315,6 +328,47 @@ with st.sidebar:
 
     # active_user_id comes from the logged-in user
     active_user_id = st.session_state.current_user or None
+
+    st.divider()
+
+    # ── Retrieval filters (metadata filtering — year / section / document) ────
+    with st.expander("🔎 Retrieval filters"):
+        from app.pdf_service import list_uploaded_docs
+
+        try:
+            _doc_titles = sorted({d["title"] for d in list_uploaded_docs(active_user_id)})
+        except Exception:
+            _doc_titles = []
+
+        _f_doc = st.selectbox("Document", ["All documents"] + _doc_titles, key="filter_doc")
+        _f_sec = st.selectbox(
+            "Section",
+            ["All sections", "abstract", "introduction", "related_work",
+             "methods", "results", "discussion", "conclusion"],
+            key="filter_section",
+        )
+        _f_year = st.number_input(
+            "Published ≥ year (0 = off; OpenAlex papers only)",
+            min_value=0, max_value=2100, value=0, key="filter_year",
+        )
+
+        _clauses: list[dict] = []
+        if _f_doc != "All documents":
+            _clauses.append({"title": _f_doc})
+        if _f_sec != "All sections":
+            _clauses.append({"section_label": _f_sec})
+        if _f_year:
+            _clauses.append({"year": {"$gte": int(_f_year)}})
+
+        if len(_clauses) > 1:
+            st.session_state.retrieval_where = {"$and": _clauses}
+        elif _clauses:
+            st.session_state.retrieval_where = _clauses[0]
+        else:
+            st.session_state.retrieval_where = None
+
+        if _clauses:
+            st.caption(f"✅ {len(_clauses)} filter aktif — BM25 dilewati, hanya vector search.")
 
     st.divider()
 
@@ -750,6 +804,9 @@ with tab_chat:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("reasoning"):
+                with st.expander("🧠 Reasoning"):
+                    st.markdown(msg["reasoning"])
             if msg.get("references"):
                 with st.expander(f"📚 References ({len(msg['references'])})"):
                     for i, ref in enumerate(msg["references"], 1):
@@ -807,13 +864,16 @@ with tab_chat:
 
         # ── Streaming RAG response ────────────────────────────────────────────────
         with st.chat_message("assistant"):
+            _think = {"think": ""}
+            _source = "kb"
             try:
-                gen, refs, oa_count, up_count = ask_stream(
+                gen, refs, oa_count, up_count, _think, _source = ask_stream(
                     prompt,
                     chat_history=history,
                     api_key=_active_key,
                     model=_model,
                     user_id=active_user_id,
+                    where=st.session_state.get("retrieval_where"),
                 )
                 full_answer = st.write_stream(gen)
             except Exception as _exc:
@@ -830,6 +890,19 @@ with tab_chat:
                     st.markdown(full_answer)
                 else:
                     raise
+
+            # Reasoning (<think> block), captured by split_think_stream
+            if _think.get("think"):
+                with st.expander("🧠 Reasoning"):
+                    st.markdown(_think["think"])
+
+            # Source badge: warn when the answer did NOT come from the user's KB
+            if _source == "openalex-live":
+                st.info("📡 Knowledge base kurang relevan — jawaban dari pencarian "
+                        "OpenAlex live, bukan dari dokumen Anda.")
+            elif _source == "web":
+                st.warning("🌐 Knowledge base & OpenAlex kurang relevan — jawaban dari "
+                           "pencarian web (DuckDuckGo).")
 
             if refs:
                 source_parts = []
@@ -860,6 +933,8 @@ with tab_chat:
         st.session_state.messages.append({
             "role": "assistant",
             "content": full_answer,
+            "reasoning": _think.get("think", ""),
+            "source": _source,
             "references": [
                 {
                     "title": r.title,
@@ -948,3 +1023,4 @@ with tab_search:
 </div>""",
                         unsafe_allow_html=True,
                     )
+

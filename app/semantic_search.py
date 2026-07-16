@@ -5,7 +5,7 @@ Useful for debugging retrieval quality and exploring document chunks.
 
 from __future__ import annotations
 
-from app.database import get_collection, embed_texts
+from app.database import get_collection, embed_query
 
 
 def semantic_search(
@@ -45,7 +45,7 @@ def semantic_search(
     if content_type_filter:
         where = {"content_type": content_type_filter}
 
-    query_emb = embed_texts([query])[0]
+    query_emb = embed_query(query)
 
     try:
         results = collection.query(

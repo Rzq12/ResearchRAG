@@ -1,5 +1,5 @@
 from app.llm_client import call_llm, stream_llm, get_provider
-from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_texts
+from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_query
 from app.config import get_settings
 from dataclasses import dataclass
 import re
@@ -38,25 +38,61 @@ Rules:
 """
 
 
+def _vector_candidates(
+    queries: list[str],
+    child_col,
+    candidate_k: int,
+    where: dict | None = None,
+) -> list[dict]:
+    """
+    Vector-search the child collection with one or more queries (the original
+    question plus optional HyDE hypotheticals). Candidates found by several
+    queries keep their best score. Returns dicts {id, text, metadata, _score}
+    sorted by score descending.
+    """
+    best: dict[str, dict] = {}
+    for q in queries:
+        results = child_col.query(
+            query_embeddings=[embed_query(q)],
+            n_results=candidate_k,
+            include=["documents", "metadatas", "distances"],
+            where=where or None,
+        )
+        for cid, text, meta, dist in zip(
+            results["ids"][0],
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            score = round(1 - dist, 4)
+            if cid not in best or score > best[cid]["_score"]:
+                best[cid] = {"id": cid, "text": text, "metadata": meta, "_score": score}
+
+    return sorted(best.values(), key=lambda c: c["_score"], reverse=True)
+
+
 def retrieve_chunks(
     query: str,
     top_k: int = None,
     user_id: str | None = None,
+    api_key: str | None = None,   # enables HyDE when provided (needs an LLM)
+    model: str | None = None,
+    where: dict | None = None,    # optional Chroma metadata filter
 ) -> tuple[list[dict], list[dict]]:
     """
-    Retrieve relevant context using Parent-Child retrieval strategy:
+    Retrieval pipeline (notebook pattern, adapted to parent-child storage):
 
-    1. Embed query → search CHILD collection (small, precise chunks) for top-K*3 candidates
-    2. Optional: cross-encoder reranker re-scores candidates
-    3. Collect parent_ids from top children
-    4. Fetch PARENT chunks (large, rich context) from parent collection
-    5. Return parent texts as context to LLM (deduped, ordered by relevance)
+    1. HyDE      — LLM writes 2 hypothetical abstracts; used as extra queries
+                   (skipped when api_key/model absent or enable_hyde=False)
+    2. Ensemble  — vector search + BM25 keyword search, fused with RRF
+                   (BM25 skipped when a `where` filter is active — the filter
+                   is enforced natively by the vector search only)
+    3. Rerank    — cross-encoder re-scores candidates against the ORIGINAL
+                   query; scores sigmoid-normalized to [0,1]
+    4. Parent    — fetch large parent chunks for the top children
 
-    Falls back to child text if parent lookup fails or parent_id is missing.
-
-    NOTE: We do NOT apply similarity_threshold during child search because child chunks
-    (~180 words) naturally have lower per-chunk scores. Threshold is only used to
-    detect when the top result is completely unrelated (score < threshold/2).
+    The top-1 reranker score is exposed as metadatas[0]["_retrieval_top1_score"]
+    so ask()/ask_stream() can apply the relevance threshold + live fallback.
     """
     cfg = get_settings()
     k   = top_k or cfg.top_k_retrieval
@@ -65,59 +101,56 @@ def retrieve_chunks(
     if child_col.count() == 0:
         return [], []
 
-    # ── Step 1: Child search (NO threshold filter here) ──────────────────────
-    # Retrieve 3× more candidates to give reranker / parent dedup room to work
-    candidate_k     = min(k * 3, child_col.count(), 60)
-    query_embedding = embed_texts([query])[0]
+    # ── Step 1: HyDE — hypothetical documents as extra retrieval queries ─────
+    queries = [query]
+    if getattr(cfg, "enable_hyde", False) and api_key and model:
+        from app.hyde import generate_hypotheticals
+        queries += generate_hypotheticals(query, api_key=api_key, model=model)
 
-    results = child_col.query(
-        query_embeddings=[query_embedding],
-        n_results=candidate_k,
-        include=["documents", "metadatas", "distances"],
-    )
-
-    child_texts = results["documents"][0]
-    child_metas = results["metadatas"][0]
-    distances   = results["distances"][0]
-
-    if not child_texts:
+    # ── Step 2a: Vector search (3× more candidates for reranker/dedup room) ──
+    candidate_k = min(k * 3, child_col.count(), 60)
+    candidates  = _vector_candidates(queries, child_col, candidate_k, where=where)
+    if not candidates:
         return [], []
 
-    # Attach similarity score (1 - cosine distance)
-    candidates = []
-    for text, meta, dist in zip(child_texts, child_metas, distances):
-        score = round(1 - dist, 4)
-        candidates.append({
-            "text":     text,
-            "metadata": meta,
-            "_score":   score,
-        })
+    # ── Step 2b: BM25 keyword search + RRF fusion ─────────────────────────────
+    if getattr(cfg, "enable_bm25", False) and not where:
+        from app.retriever import bm25_search, rrf_fuse
+        bm25_hits = bm25_search(query, user_id=user_id, k=candidate_k)
+        if bm25_hits:
+            candidates = rrf_fuse(
+                candidates, bm25_hits,
+                vector_weight = getattr(cfg, "vector_weight", 0.6),
+                bm25_weight   = getattr(cfg, "bm25_weight", 0.4),
+            )
 
-    # Soft threshold check: if the BEST candidate is below threshold/2, the query
-    # is completely unrelated to anything in KB → return empty so LLM can say so.
-    best_score = candidates[0]["_score"] if candidates else 0
-    if best_score < cfg.similarity_threshold / 2:
-        return [], []
-
-    # ── Step 2: Optional reranker ─────────────────────────────────────────────
+    # ── Step 3: Rerank against the ORIGINAL query ─────────────────────────────
+    top1_score: float | None = None
     if cfg.enable_reranker and candidates:
         try:
             from app.reranker import rerank
-            flat = [{"text": c["text"], **c} for c in candidates]
             reranked = rerank(
                 query      = query,
-                chunks     = flat,
+                chunks     = candidates[: getattr(cfg, "rerank_max_candidates", 20)],
                 model_name = cfg.reranker_model,
                 top_k      = k,
             )
             candidates = [
-                {"text": r["text"], "metadata": r["metadata"], "_score": r.get("_rerank_score", r["_score"])}
+                {"id": r.get("id", ""), "text": r["text"], "metadata": r["metadata"],
+                 "_score": r["_rerank_score"]}
                 for r in reranked
             ]
-        except Exception:
+            top1_score = candidates[0]["_score"] if candidates else 0.0
+        except Exception as exc:
+            print(f"[Reranker] failed, using fusion order: {exc}")
             candidates = candidates[:k]
     else:
         candidates = candidates[:k]
+        # Legacy soft check (only meaningful without reranker): if even the
+        # best vector score is near zero, the query is completely unrelated.
+        best_score = candidates[0]["_score"] if candidates else 0
+        if best_score < cfg.similarity_threshold / 2:
+            return [], []
 
     # ── Step 3: Fetch parent chunks ───────────────────────────────────────────
     parent_ids_ordered: list[str] = []
@@ -161,6 +194,10 @@ def retrieve_chunks(
             final_chunks.append(c["text"])
             final_metadatas.append({**c["metadata"], "_score": c["_score"]})
 
+    # Expose the reranker top-1 score for the relevance-threshold check.
+    if final_metadatas and top1_score is not None:
+        final_metadatas[0]["_retrieval_top1_score"] = top1_score
+
     return final_chunks, final_metadatas
 
 
@@ -182,6 +219,8 @@ class RAGResponse:
     references: list[Reference]
     openalex_papers_used: int
     uploaded_docs_used: int
+    reasoning: str = ""        # content of the <think> block, if any
+    source: str = "kb"         # "kb" | "openalex-live" | "web" | "none"
 
 
 SYSTEM_PROMPT = """You are a research assistant with access to scientific papers from OpenAlex and user-uploaded documents.
@@ -198,6 +237,74 @@ Rules:
 7. Write in the same language as the question (Indonesian or English).
 """
 
+_REASONING_INSTRUCTIONS = """
+Before answering, reason inside <think> and </think> tags: which papers in the
+context are relevant, whether they agree or conflict, and what the context does
+NOT cover. Keep the reasoning brief (3-6 sentences). After </think>, write the
+final answer with citations [1], [2]. The reasoning may be in English; the
+final answer MUST be in the same language as the question.
+"""
+
+
+def _system_prompt() -> str:
+    cfg = get_settings()
+    if getattr(cfg, "enable_reasoning", False):
+        return SYSTEM_PROMPT + _REASONING_INSTRUCTIONS
+    return SYSTEM_PROMPT
+
+
+def _resolve_relevance(metadatas: list[dict]) -> float | None:
+    """Reranker top-1 score exposed by retrieve_chunks, or None if unavailable."""
+    if not metadatas:
+        return None
+    return metadatas[0].get("_retrieval_top1_score")
+
+
+def _fallback_refs(raw_refs: list[dict]) -> list[Reference]:
+    return [
+        Reference(
+            title           = r.get("title", ""),
+            authors         = r.get("authors", ""),
+            published       = r.get("published", ""),
+            url             = r.get("url", ""),
+            source          = r.get("source", "web"),
+            relevance_score = 0.0,
+        )
+        for r in raw_refs
+    ]
+
+
+_NO_SOURCE_ANSWER = (
+    "Tidak ada sumber yang cukup relevan — baik di knowledge base Anda maupun "
+    "dari pencarian langsung (OpenAlex / web). Saya tidak akan menebak jawaban.\n\n"
+    "No sufficiently relevant source was found in your knowledge base or via "
+    "live search, so I won't guess an answer."
+)
+
+
+def make_citation(meta: dict) -> str:
+    """
+    Short academic citation string for a chunk — the domain analogue of the
+    legal notebook's 'PP No. 35 Tahun 2021, Pasal 78':
+    e.g. 'Vaswani et al., 2017 [methods]'.
+    """
+    authors = meta.get("authors", "")
+    first   = authors.split(",")[0].strip() if authors else ""
+    et_al   = " et al." if authors.count(",") >= 1 else ""
+
+    published = str(meta.get("published", ""))
+    year      = published[:4] if published[:4].isdigit() else ""
+
+    label = meta.get("section_label", "") or ""
+    if label in ("", "other"):
+        label = ""
+
+    core = f"{first}{et_al}" if first and first != "Uploaded by user" else meta.get("title", "")
+    if year:
+        core += f", {year}"
+    if label:
+        core += f" [{label}]"
+    return core
 
 
 def build_context(chunks: list[str], metadatas: list[dict]) -> tuple[str, list[Reference]]:
@@ -237,10 +344,12 @@ def build_context(chunks: list[str], metadatas: list[dict]) -> tuple[str, list[R
                 header_parts.append(f"Year: {published}")
             context_parts.append("\n".join(header_parts))
 
-        ref_num = seen_titles[title]
+        ref_num  = seen_titles[title]
+        citation = make_citation(meta)
+        cite_tag = f" ({citation})" if citation and citation != title else ""
         # Include section label if available
-        section_label = f" [{section}]" if section else ""
-        context_parts.append(f"[{ref_num}]{section_label} {chunk}")
+        section_tag = f" [{section}]" if section else ""
+        context_parts.append(f"[{ref_num}]{cite_tag}{section_tag} {chunk}")
 
     context = "\n\n".join(context_parts)
     return context, refs
@@ -264,18 +373,64 @@ def _build_rag_messages(
     refs_text: str,
     chat_history: list[dict] | None,
 ) -> list[dict]:
-    """Shared helper: assemble the full messages list for Groq."""
+    """Shared helper: assemble the full messages list for the LLM."""
     user_message = (
         f"Context from papers:\n{context}\n\n"
         f"Available references:\n{refs_text}\n\n"
         f"Question: {query}\n\n"
-        "Answer based on the context above and cite references using [1], [2], etc."
+        "Answer based on the context above and cite references using [1], [2], etc. "
+        "IMPORTANT: write the final answer in the language of the QUESTION above — "
+        "ignore the language of the context passages."
     )
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": _system_prompt()}]
     if chat_history:
         messages.extend(chat_history[-6:])
     messages.append({"role": "user", "content": user_message})
     return messages
+
+
+def _prepare_context(
+    query: str,
+    cfg,
+    user_id: str | None,
+    api_key: str | None,
+    model: str | None,
+    where: dict | None,
+) -> tuple[str, list[Reference], str] | None:
+    """
+    Shared retrieval front-end for ask()/ask_stream():
+    retrieve → relevance threshold → (local KB context | live fallback).
+
+    Returns (context, refs, source) — source is "kb", "openalex-live", "web",
+    or "none" (nothing relevant anywhere). Returns None when the KB is simply
+    empty/unmatched and the caller should use _no_chunks_response.
+    """
+    chunks, metadatas = retrieve_chunks(
+        query, user_id=user_id, api_key=api_key, model=model, where=where,
+    )
+
+    top1 = _resolve_relevance(metadatas)
+    below_threshold = (
+        top1 is not None
+        and top1 < getattr(cfg, "relevance_threshold", 0.5)
+        and getattr(cfg, "enable_web_fallback", False)
+    )
+
+    if below_threshold:
+        # Local KB not relevant enough → OpenAlex live → DuckDuckGo.
+        print(f"[fallback] top-1 rerank score {top1} < "
+              f"{cfg.relevance_threshold} — trying live sources")
+        from app.fallback import fallback_context
+        context, raw_refs, note = fallback_context(query)
+        if not context:
+            return "", [], "none"
+        return context, _fallback_refs(raw_refs), note
+
+    if not chunks:
+        return None
+
+    context, refs = build_context(chunks, metadatas)
+    return context, refs, "kb"
 
 
 def _truncate_context(
@@ -335,11 +490,12 @@ def ask(
     api_key: str | None = None,       # Groq key OR Gemini key, depending on model
     model: str | None = None,
     user_id: str | None = None,
+    where: dict | None = None,        # optional metadata filter (year, section, …)
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> RAGResponse:
-    """Full RAG pipeline: retrieve → build context → call LLM → return answer + refs.
-    Supports both Groq and Gemini models via the unified llm_client.
+    """Full RAG pipeline: HyDE → hybrid retrieve → rerank → threshold/fallback
+    → build context → call LLM → parse <think> → return answer + refs.
     """
     cfg = get_settings()
     _key         = api_key or groq_api_key or cfg.groq_api_key
@@ -349,14 +505,20 @@ def ask(
     if not _key:
         raise ValueError(f"API key required for provider '{_provider}'.")
 
-    chunks, metadatas = retrieve_chunks(query, user_id=user_id)
-    if not chunks:
+    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where)
+    if prepared is None:
         return _no_chunks_response(cfg, user_id)
 
-    context, refs = build_context(chunks, metadatas)
+    context, refs, source = prepared
+    if source == "none":
+        return RAGResponse(
+            answer=_NO_SOURCE_ANSWER, references=[], openalex_papers_used=0,
+            uploaded_docs_used=0, source="none",
+        )
+
     # Gemini has 1M context — no need to truncate aggressively.
     # Groq free tier: ~12k TPM — keep context under 9k tokens.
-    budget = 200_000 if _provider == "gemini" else cfg.max_tokens_response * 3
+    budget  = 200_000 if _provider == "gemini" else cfg.max_tokens_response * 3
     context = _truncate_context(context, max_tokens=budget)
 
     refs_text      = format_references_for_prompt(refs)
@@ -364,7 +526,7 @@ def ask(
     upload_count   = sum(1 for r in refs if r.source == "upload")
 
     messages = _build_rag_messages(query, context, refs_text, chat_history)
-    answer   = call_llm(
+    raw      = call_llm(
         model       = chosen_model,
         messages    = messages,
         api_key     = _key,
@@ -372,11 +534,16 @@ def ask(
         temperature = 0.3,
     )
 
+    from app.reasoning import parse_think
+    reasoning, answer = parse_think(raw)
+
     return RAGResponse(
         answer               = answer,
         references           = refs,
         openalex_papers_used = openalex_count,
         uploaded_docs_used   = upload_count,
+        reasoning            = reasoning,
+        source               = source,
     )
 
  # ─── Streaming ask ───────────────────────────────────────────────────────────────
@@ -387,17 +554,27 @@ def ask_stream(
     api_key: str | None = None,        # Groq key OR Gemini key, depending on model
     model: str | None = None,
     user_id: str | None = None,
+    where: dict | None = None,         # optional metadata filter (year, section, …)
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> tuple:
     """
-    Streaming RAG pipeline (Groq + Gemini).
-    Returns (text_generator, refs, openalex_count, upload_count).
+    Streaming RAG pipeline (Groq + Gemini + self-hosted).
+    Returns (text_generator, refs, openalex_count, upload_count,
+             think_holder, source).
+
+    - think_holder["think"] holds the <think> reasoning; read it AFTER the
+      generator is fully consumed (st.write_stream returns first).
+    - source: "kb" | "openalex-live" | "web" | "none" — non-"kb" means the
+      answer did NOT come from the user's knowledge base.
 
     Usage in Streamlit:
-        gen, refs, oa, up = ask_stream(...)
+        gen, refs, oa, up, think, source = ask_stream(...)
         full_answer = st.write_stream(gen)
+        if think["think"]: st.expander("Reasoning").markdown(think["think"])
     """
+    from app.reasoning import split_think_stream
+
     cfg = get_settings()
     _key         = api_key or groq_api_key or cfg.groq_api_key
     chosen_model = model or cfg.groq_model
@@ -406,16 +583,24 @@ def ask_stream(
     if not _key:
         raise ValueError(f"API key required for provider '{_provider}'.")
 
-    chunks, metadatas = retrieve_chunks(query, user_id=user_id)
-    if not chunks:
-        fallback = _no_chunks_response(cfg, user_id)
+    empty_holder = {"think": ""}
 
-        def _fallback_gen():
-            yield fallback.answer
+    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where)
+    if prepared is None:
+        no_chunks = _no_chunks_response(cfg, user_id)
 
-        return _fallback_gen(), [], 0, 0
+        def _no_chunks_gen():
+            yield no_chunks.answer
 
-    context, refs = build_context(chunks, metadatas)
+        return _no_chunks_gen(), [], 0, 0, empty_holder, "kb"
+
+    context, refs, source = prepared
+    if source == "none":
+        def _no_source_gen():
+            yield _NO_SOURCE_ANSWER
+
+        return _no_source_gen(), [], 0, 0, empty_holder, "none"
+
     # Gemini: 1M context — large budget. Groq free tier: conservative 9k tokens.
     budget  = 200_000 if _provider == "gemini" else 9_000
     context = _truncate_context(context, max_tokens=budget)
@@ -426,17 +611,22 @@ def ask_stream(
 
     messages = _build_rag_messages(query, context, refs_text, chat_history)
 
+    raw_stream = stream_llm(
+        model       = chosen_model,
+        messages    = messages,
+        api_key     = _key,
+        max_tokens  = cfg.max_tokens_response,
+        temperature = 0.3,
+    )
+    answer_stream, think_holder = split_think_stream(raw_stream)
+
     return (
-        stream_llm(
-            model       = chosen_model,
-            messages    = messages,
-            api_key     = _key,
-            max_tokens  = cfg.max_tokens_response,
-            temperature = 0.3,
-        ),
+        answer_stream,
         refs,
         openalex_count,
         upload_count,
+        think_holder,
+        source,
     )
 
 

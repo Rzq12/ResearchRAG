@@ -1,0 +1,117 @@
+{
+  "_comment": "Self-contained eval corpus. Abstracts are original paraphrases (not verbatim), written for retrieval evaluation only. eval_doc_id is the ground-truth key used by golden_set.json.",
+  "documents": [
+    {
+      "eval_doc_id": "transformer",
+      "title": "Attention Is All You Need",
+      "authors": "Ashish Vaswani, Noam Shazeer, Niki Parmar",
+      "published": "2017",
+      "language": "en",
+      "abstract": "This work introduces the Transformer, a sequence transduction architecture that removes recurrence and convolutions entirely and relies solely on attention mechanisms. Self-attention layers relate all positions of a sequence in parallel, while multi-head attention lets the model attend to information from different representation subspaces. Positional encodings inject order information. On machine translation benchmarks the architecture trains significantly faster than recurrent models and reaches state-of-the-art BLEU scores on English-German and English-French tasks, establishing attention as a sufficient building block for sequence modeling."
+    },
+    {
+      "eval_doc_id": "bert",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "authors": "Jacob Devlin, Ming-Wei Chang, Kenton Lee, Kristina Toutanova",
+      "published": "2019",
+      "language": "en",
+      "abstract": "BERT is a language representation model that pre-trains deep bidirectional Transformer encoders on unlabeled text using two objectives: masked language modeling, where random tokens are hidden and predicted from both left and right context, and next sentence prediction. After pre-training on large corpora, the model is fine-tuned with a single additional output layer for downstream tasks. This transfer learning recipe produces large improvements on eleven natural language processing benchmarks, including question answering on SQuAD and language inference on GLUE, without heavy task-specific architecture engineering."
+    },
+    {
+      "eval_doc_id": "rag",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "authors": "Patrick Lewis, Ethan Perez, Aleksandra Piktus, Sebastian Riedel",
+      "published": "2020",
+      "language": "en",
+      "abstract": "This paper proposes retrieval-augmented generation (RAG), which combines a parametric sequence-to-sequence generator with a non-parametric memory: a dense vector index of Wikipedia accessed through a learned neural retriever. For each input, the retriever fetches supporting passages and the generator conditions on them to produce the answer, with retrieval treated as a latent variable that can be marginalized per token or per sequence. RAG outperforms purely parametric baselines on open-domain question answering and produces generations that are more specific and more factual, while allowing the knowledge base to be swapped or updated without retraining the whole model. A known limitation is that answer quality is bounded by what the retriever surfaces, and hallucination can persist when retrieved evidence is only partially relevant."
+    },
+    {
+      "eval_doc_id": "dpr",
+      "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+      "authors": "Vladimir Karpukhin, Barlas Oguz, Sewon Min, Wen-tau Yih",
+      "published": "2020",
+      "language": "en",
+      "abstract": "Dense Passage Retrieval (DPR) shows that retrieval for open-domain question answering can be implemented with dense vector representations alone, replacing traditional sparse methods such as TF-IDF and BM25. A dual-encoder architecture embeds questions and passages into the same space and is trained on question-passage pairs with in-batch negatives. On a wide range of QA datasets, DPR outperforms a strong BM25 baseline by a large margin in top-20 retrieval accuracy and drives end-to-end QA systems to new state-of-the-art results, demonstrating that learned dense embeddings can beat keyword matching for semantic retrieval."
+    },
+    {
+      "eval_doc_id": "gpt3",
+      "title": "Language Models are Few-Shot Learners",
+      "authors": "Tom Brown, Benjamin Mann, Nick Ryder, Dario Amodei",
+      "published": "2020",
+      "language": "en",
+      "abstract": "This work trains GPT-3, an autoregressive language model with 175 billion parameters, and evaluates it without any gradient updates on downstream tasks. Tasks are specified purely through text interaction: zero-shot with instructions only, one-shot, or few-shot with a handful of in-context demonstrations. Scaling model size yields smooth improvements in this in-context learning ability, and the largest model reaches strong performance on translation, question answering, cloze tasks, and reasoning benchmarks, sometimes rivaling fine-tuned systems. The paper also discusses limitations, including weaknesses on some comparison tasks and the broader societal risks of large generative models."
+    },
+    {
+      "eval_doc_id": "lora",
+      "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+      "authors": "Edward Hu, Yelong Shen, Phillip Wallis, Weizhu Chen",
+      "published": "2021",
+      "language": "en",
+      "abstract": "LoRA is a parameter-efficient fine-tuning method that freezes the pre-trained model weights and injects trainable low-rank decomposition matrices into each layer of a Transformer, typically the attention projection matrices. Because only the small rank-decomposition matrices are updated, the number of trainable parameters drops by up to ten thousand times compared with full fine-tuning of GPT-3, and GPU memory requirements fall roughly threefold, while task performance matches or exceeds full fine-tuning on RoBERTa, DeBERTa, and GPT benchmarks. At deployment the low-rank updates can be merged into the frozen weights, so no additional inference latency is introduced."
+    },
+    {
+      "eval_doc_id": "qlora",
+      "title": "QLoRA: Efficient Finetuning of Quantized LLMs",
+      "authors": "Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, Luke Zettlemoyer",
+      "published": "2023",
+      "language": "en",
+      "abstract": "QLoRA enables fine-tuning of a 65-billion-parameter model on a single 48 GB GPU by backpropagating gradients through a frozen 4-bit quantized base model into low-rank adapters. The method introduces the 4-bit NormalFloat data type, which is information-theoretically optimal for normally distributed weights, double quantization that also quantizes the quantization constants to save memory, and paged optimizers to handle memory spikes. Models fine-tuned this way, such as the Guanaco family, preserve full 16-bit fine-tuning performance while drastically reducing memory, making large-model adaptation feasible on modest hardware."
+    },
+    {
+      "eval_doc_id": "hyde",
+      "title": "Precise Zero-Shot Dense Retrieval without Relevance Labels",
+      "authors": "Luyu Gao, Xueguang Ma, Jimmy Lin, Jamie Callan",
+      "published": "2022",
+      "language": "en",
+      "abstract": "This paper proposes HyDE, Hypothetical Document Embeddings, for zero-shot dense retrieval when no relevance labels are available. Given a query, an instruction-following language model first generates a hypothetical document that answers the query; the document may contain factual errors but captures relevance patterns. A contrastively trained encoder then embeds this hypothetical document, and real documents closest to that embedding in vector space are retrieved, with the encoder's bottleneck filtering out hallucinated details. HyDE significantly outperforms unsupervised dense retrievers and remains competitive with fine-tuned ones across web search, QA, and fact verification, in multiple languages."
+    },
+    {
+      "eval_doc_id": "colbert",
+      "title": "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT",
+      "authors": "Omar Khattab, Matei Zaharia",
+      "published": "2020",
+      "language": "en",
+      "abstract": "ColBERT introduces a late interaction paradigm for neural passage retrieval: queries and documents are encoded independently into bags of contextualized token embeddings by BERT, and relevance is computed afterwards with a cheap maximum-similarity operator between query tokens and document tokens. This design keeps the expressiveness of fine-grained term matching while allowing document representations to be precomputed offline, making the model two orders of magnitude faster than full cross-encoder BERT rankers at comparable effectiveness, and it supports end-to-end retrieval from millions of passages using vector indexes."
+    },
+    {
+      "eval_doc_id": "sbert",
+      "title": "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks",
+      "authors": "Nils Reimers, Iryna Gurevych",
+      "published": "2019",
+      "language": "en",
+      "abstract": "Sentence-BERT (SBERT) modifies BERT with siamese and triplet network structures to produce semantically meaningful fixed-size sentence embeddings that can be compared with cosine similarity. Standard BERT requires feeding both sentences through the network jointly, which makes large-scale similarity search computationally prohibitive; SBERT reduces the time to find the most similar pair among ten thousand sentences from tens of hours to seconds while keeping accuracy. The model is trained on natural language inference data and outperforms previous sentence embedding methods on semantic textual similarity and transfer learning benchmarks."
+    },
+    {
+      "eval_doc_id": "vit",
+      "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale",
+      "authors": "Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Neil Houlsby",
+      "published": "2021",
+      "language": "en",
+      "abstract": "The Vision Transformer (ViT) applies a standard Transformer encoder directly to sequences of image patches, treating each 16x16 patch as a token, without using convolutional networks. When trained on mid-sized datasets the model underperforms comparable convolutional architectures because it lacks their inductive biases, but when pre-trained on very large datasets and transferred to downstream benchmarks such as ImageNet and CIFAR, ViT matches or exceeds state-of-the-art convolutional networks while requiring substantially less compute to train, showing that large-scale pre-training can substitute for architectural priors in computer vision."
+    },
+    {
+      "eval_doc_id": "sentimen-id",
+      "title": "Analisis Sentimen Ulasan Produk Berbahasa Indonesia Menggunakan IndoBERT",
+      "authors": "Rina Wijaya, Budi Santoso",
+      "published": "2022",
+      "language": "id",
+      "abstract": "Penelitian ini mengkaji analisis sentimen pada ulasan produk e-commerce berbahasa Indonesia dengan memanfaatkan model IndoBERT yang telah dilatih pada korpus Bahasa Indonesia berskala besar. Model dibandingkan dengan pendekatan klasik seperti Naive Bayes dan SVM dengan fitur TF-IDF, serta arsitektur LSTM dua arah. Hasil eksperimen pada 50 ribu ulasan menunjukkan bahwa fine-tuning IndoBERT mencapai akurasi dan F1 tertinggi, terutama pada kalimat dengan bahasa informal, singkatan, dan campuran dialek. Studi ini juga membahas tantangan slang dan kata serapan dalam ulasan pengguna Indonesia serta pengaruh ukuran data latih terhadap kinerja model."
+    },
+    {
+      "eval_doc_id": "ner-id",
+      "title": "Pengenalan Entitas Bernama pada Dokumen Hukum Berbahasa Indonesia",
+      "authors": "Dewi Lestari, Agus Prasetyo",
+      "published": "2023",
+      "language": "id",
+      "abstract": "Makalah ini membangun sistem pengenalan entitas bernama (NER) khusus untuk dokumen hukum berbahasa Indonesia, seperti putusan pengadilan dan peraturan perundang-undangan. Korpus beranotasi baru dibuat mencakup entitas nomor pasal, nama peraturan, institusi, dan pihak berperkara. Beberapa arsitektur dibandingkan, mulai dari CRF berbasis fitur manual hingga model transformer multilingual dan IndoBERT yang di-fine-tune. Model transformer memberikan F1 terbaik, dan analisis kesalahan menunjukkan bahwa referensi silang antar pasal serta singkatan nama peraturan merupakan sumber kesalahan utama. Dataset dan model dirilis untuk mendukung riset NLP hukum di Indonesia."
+    },
+    {
+      "eval_doc_id": "qa-id",
+      "title": "Sistem Tanya Jawab Peraturan Perundang-undangan Indonesia Berbasis Retrieval-Augmented Generation",
+      "authors": "Fajar Nugroho, Siti Rahmawati",
+      "published": "2024",
+      "language": "id",
+      "abstract": "Penelitian ini mengembangkan sistem tanya jawab otomatis untuk peraturan perundang-undangan Indonesia menggunakan pendekatan retrieval-augmented generation. Dokumen peraturan dipecah menjadi potongan teks dengan metadata nomor pasal, kemudian diindeks menggunakan embedding multilingual dan basis data vektor. Saat pengguna bertanya, sistem mengambil pasal-pasal paling relevan lalu menyusun jawaban dengan model bahasa generatif yang dibatasi pada konteks hasil pengambilan. Evaluasi pada 500 pertanyaan menunjukkan bahwa kombinasi pencarian kata kunci BM25 dan pencarian vektor memberikan akurasi pengambilan terbaik, dan penambahan sitasi pasal pada jawaban meningkatkan kepercayaan pengguna terhadap sistem."
+    }
+  ]
+}

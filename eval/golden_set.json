@@ -1,0 +1,185 @@
+{
+  "_comment": "30 golden queries: 15 en, 10 id, 5 mixed (code-switching). expected_doc_ids reference eval_doc_id in corpus.json. Cross-lingual queries (id question -> en doc) intentionally test multilingual embedding quality.",
+  "queries": [
+    {
+      "id": "q01", "language": "en",
+      "question": "What mechanism does the Transformer architecture rely on instead of recurrence and convolutions?",
+      "expected_doc_ids": ["transformer"],
+      "expected_answer_points": ["relies entirely on attention mechanisms", "self-attention relates all positions in parallel", "multi-head attention", "positional encodings inject order information"]
+    },
+    {
+      "id": "q02", "language": "en",
+      "question": "How is BERT pre-trained and what objectives does it use?",
+      "expected_doc_ids": ["bert"],
+      "expected_answer_points": ["masked language modeling predicts hidden tokens from both directions", "next sentence prediction", "pre-trained on unlabeled text then fine-tuned"]
+    },
+    {
+      "id": "q03", "language": "en",
+      "question": "What are the main limitations of retrieval-augmented generation?",
+      "expected_doc_ids": ["rag"],
+      "expected_answer_points": ["answer quality is bounded by what the retriever surfaces", "hallucination can persist when retrieved evidence is only partially relevant"]
+    },
+    {
+      "id": "q04", "language": "en",
+      "question": "How does DPR compare to BM25 for open-domain question answering?",
+      "expected_doc_ids": ["dpr"],
+      "expected_answer_points": ["dense dual-encoder outperforms BM25 by a large margin", "top-20 retrieval accuracy", "trained with in-batch negatives"]
+    },
+    {
+      "id": "q05", "language": "en",
+      "question": "What is in-context learning and how does model scale affect it?",
+      "expected_doc_ids": ["gpt3"],
+      "expected_answer_points": ["tasks specified through text without gradient updates", "few-shot demonstrations in the prompt", "scaling model size smoothly improves in-context learning"]
+    },
+    {
+      "id": "q06", "language": "en",
+      "question": "How does LoRA reduce the cost of fine-tuning large language models?",
+      "expected_doc_ids": ["lora"],
+      "expected_answer_points": ["freezes pre-trained weights", "trains low-rank decomposition matrices", "up to ten thousand times fewer trainable parameters", "no additional inference latency after merging"]
+    },
+    {
+      "id": "q07", "language": "en",
+      "question": "What is double quantization in QLoRA?",
+      "expected_doc_ids": ["qlora"],
+      "expected_answer_points": ["quantizes the quantization constants themselves to save memory", "combined with 4-bit NormalFloat", "backpropagates through frozen 4-bit base model into adapters"]
+    },
+    {
+      "id": "q08", "language": "en",
+      "question": "How can dense retrieval work in a zero-shot setting without any relevance labels?",
+      "expected_doc_ids": ["hyde"],
+      "expected_answer_points": ["language model generates a hypothetical document answering the query", "the hypothetical document is embedded and used for nearest-neighbour search", "encoder bottleneck filters hallucinated details"]
+    },
+    {
+      "id": "q09", "language": "en",
+      "question": "What is late interaction in ColBERT and why is it efficient?",
+      "expected_doc_ids": ["colbert"],
+      "expected_answer_points": ["queries and documents encoded independently as token embeddings", "maximum-similarity operator computed afterwards", "document representations precomputed offline", "two orders of magnitude faster than cross-encoders"]
+    },
+    {
+      "id": "q10", "language": "en",
+      "question": "Why is standard BERT impractical for large-scale sentence similarity search, and what is the alternative?",
+      "expected_doc_ids": ["sbert", "bert"],
+      "expected_answer_points": ["BERT requires feeding both sentences jointly", "SBERT uses siamese networks to produce fixed-size embeddings", "cosine similarity comparison reduces search from hours to seconds"]
+    },
+    {
+      "id": "q11", "language": "en",
+      "question": "Can Transformers be applied directly to images without convolutions?",
+      "expected_doc_ids": ["vit"],
+      "expected_answer_points": ["image split into 16x16 patches treated as tokens", "needs very large pre-training data to beat convolutional networks", "matches or exceeds state-of-the-art with less training compute"]
+    },
+    {
+      "id": "q12", "language": "en",
+      "question": "Which parameter-efficient fine-tuning methods allow adapting very large models on limited GPU memory?",
+      "expected_doc_ids": ["lora", "qlora"],
+      "expected_answer_points": ["LoRA trains low-rank adapters on frozen weights", "QLoRA fine-tunes through a frozen 4-bit quantized model", "65B model on a single 48 GB GPU"]
+    },
+    {
+      "id": "q13", "language": "en",
+      "question": "What approaches exist for making neural retrieval faster or cheaper than full cross-encoder ranking?",
+      "expected_doc_ids": ["colbert", "sbert"],
+      "expected_answer_points": ["late interaction with precomputed document embeddings", "siamese sentence embeddings compared by cosine similarity"]
+    },
+    {
+      "id": "q14", "language": "en",
+      "question": "How do retrieval-based systems keep generated answers grounded and updatable?",
+      "expected_doc_ids": ["rag", "qa-id"],
+      "expected_answer_points": ["generator conditions on retrieved passages", "knowledge base can be swapped without retraining", "citations increase user trust"]
+    },
+    {
+      "id": "q15", "language": "en",
+      "question": "What did GPT-3 reveal about the relationship between model size and task performance without fine-tuning?",
+      "expected_doc_ids": ["gpt3"],
+      "expected_answer_points": ["175 billion parameters", "few-shot performance sometimes rivals fine-tuned systems", "smooth improvement with scale"]
+    },
+    {
+      "id": "q16", "language": "id",
+      "question": "Bagaimana cara kerja mekanisme perhatian pada arsitektur Transformer?",
+      "expected_doc_ids": ["transformer"],
+      "expected_answer_points": ["self-attention menghubungkan semua posisi secara paralel", "multi-head attention", "tanpa rekurensi dan konvolusi"]
+    },
+    {
+      "id": "q17", "language": "id",
+      "question": "Apa keunggulan IndoBERT dibandingkan Naive Bayes dan SVM untuk analisis sentimen ulasan produk?",
+      "expected_doc_ids": ["sentimen-id"],
+      "expected_answer_points": ["akurasi dan F1 tertinggi", "unggul pada bahasa informal dan singkatan", "fine-tuning pada korpus Bahasa Indonesia"]
+    },
+    {
+      "id": "q18", "language": "id",
+      "question": "Entitas apa saja yang dikenali sistem NER untuk dokumen hukum Indonesia?",
+      "expected_doc_ids": ["ner-id"],
+      "expected_answer_points": ["nomor pasal", "nama peraturan", "institusi", "pihak berperkara"]
+    },
+    {
+      "id": "q19", "language": "id",
+      "question": "Kombinasi metode pencarian apa yang memberikan akurasi pengambilan terbaik pada sistem tanya jawab peraturan?",
+      "expected_doc_ids": ["qa-id"],
+      "expected_answer_points": ["kombinasi BM25 dan pencarian vektor", "embedding multilingual dengan basis data vektor", "sitasi pasal meningkatkan kepercayaan"]
+    },
+    {
+      "id": "q20", "language": "id",
+      "question": "Mengapa model bahasa besar bisa mengerjakan tugas baru hanya dari beberapa contoh di prompt?",
+      "expected_doc_ids": ["gpt3"],
+      "expected_answer_points": ["in-context learning tanpa pembaruan gradien", "kemampuan meningkat seiring ukuran model"]
+    },
+    {
+      "id": "q21", "language": "id",
+      "question": "Bagaimana teknik fine-tuning hemat memori untuk model bahasa berukuran sangat besar?",
+      "expected_doc_ids": ["qlora", "lora"],
+      "expected_answer_points": ["adapter low-rank pada bobot beku", "kuantisasi 4-bit", "double quantization menghemat memori"]
+    },
+    {
+      "id": "q22", "language": "id",
+      "question": "Apa sumber kesalahan utama pada pengenalan entitas di putusan pengadilan?",
+      "expected_doc_ids": ["ner-id"],
+      "expected_answer_points": ["referensi silang antar pasal", "singkatan nama peraturan"]
+    },
+    {
+      "id": "q23", "language": "id",
+      "question": "Bagaimana cara membuat embedding kalimat yang bisa dibandingkan dengan cosine similarity secara efisien?",
+      "expected_doc_ids": ["sbert"],
+      "expected_answer_points": ["jaringan siamese menghasilkan embedding berukuran tetap", "pencarian kemiripan turun dari berjam-jam menjadi detik"]
+    },
+    {
+      "id": "q24", "language": "id",
+      "question": "Apakah arsitektur Transformer bisa dipakai untuk klasifikasi gambar tanpa CNN?",
+      "expected_doc_ids": ["vit"],
+      "expected_answer_points": ["gambar dipotong menjadi patch 16x16 sebagai token", "butuh pre-training data sangat besar", "menyamai atau melampaui CNN"]
+    },
+    {
+      "id": "q25", "language": "id",
+      "question": "Apa kelemahan utama sistem RAG dalam menghasilkan jawaban yang faktual?",
+      "expected_doc_ids": ["rag"],
+      "expected_answer_points": ["kualitas jawaban dibatasi hasil retriever", "halusinasi tetap muncul bila bukti hanya sebagian relevan"]
+    },
+    {
+      "id": "q26", "language": "mixed",
+      "question": "Jelaskan cara kerja LoRA untuk fine-tuning LLM, kenapa parameter yang dilatih jauh lebih sedikit?",
+      "expected_doc_ids": ["lora"],
+      "expected_answer_points": ["bobot pre-trained dibekukan", "matriks low-rank yang kecil saja yang dilatih", "hingga sepuluh ribu kali lebih sedikit parameter"]
+    },
+    {
+      "id": "q27", "language": "mixed",
+      "question": "Apa itu HyDE dan bagaimana hypothetical document dipakai untuk retrieval?",
+      "expected_doc_ids": ["hyde"],
+      "expected_answer_points": ["LLM membuat dokumen hipotetis yang menjawab query", "embedding dokumen hipotetis dipakai mencari dokumen nyata terdekat"]
+    },
+    {
+      "id": "q28", "language": "mixed",
+      "question": "Bandingkan dense retrieval seperti DPR dengan keyword search BM25, mana yang lebih akurat?",
+      "expected_doc_ids": ["dpr", "qa-id"],
+      "expected_answer_points": ["DPR mengungguli BM25 pada akurasi top-20", "kombinasi BM25 dan vektor terbaik pada domain peraturan"]
+    },
+    {
+      "id": "q29", "language": "mixed",
+      "question": "Kenapa masked language modeling penting untuk pre-training model seperti BERT?",
+      "expected_doc_ids": ["bert"],
+      "expected_answer_points": ["memprediksi token tersembunyi dari konteks dua arah", "representasi bidirectional yang bisa di-fine-tune"]
+    },
+    {
+      "id": "q30", "language": "mixed",
+      "question": "Untuk chatbot dokumen hukum Indonesia, teknik NLP apa saja yang relevan dari paper-paper ini?",
+      "expected_doc_ids": ["qa-id", "ner-id"],
+      "expected_answer_points": ["RAG dengan metadata nomor pasal", "NER untuk entitas hukum", "kombinasi BM25 dan pencarian vektor"]
+    }
+  ]
+}

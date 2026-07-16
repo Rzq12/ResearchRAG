@@ -6,7 +6,7 @@ Uses the advanced chunker pipeline (hierarchical + layout-aware + parent-child).
 from app.chunker import extract_pdf_chunks_advanced, CoverageReport
 from app.database import (
     get_collection, get_parent_collection,
-    embed_texts, make_doc_id,
+    embed_documents, make_doc_id,
 )
 
 
@@ -52,7 +52,7 @@ def ingest_pdf(
         child_metas.append(meta)
 
     if child_texts:
-        embeddings = embed_texts(child_texts)
+        embeddings = embed_documents(child_texts)
         child_col.add(
             documents  = child_texts,
             embeddings = embeddings,
@@ -82,13 +82,17 @@ def ingest_pdf(
         # default embedding function configured, so explicit embeddings are required.
         # Parent chunks are looked up by ID (not by similarity), but storage still
         # requires embeddings to avoid ChromaDB ValueError.
-        parent_embeddings = embed_texts(parent_texts)
+        parent_embeddings = embed_documents(parent_texts)
         parent_col.add(
             documents  = parent_texts,
             embeddings = parent_embeddings,
             ids        = parent_ids,
             metadatas  = parent_metas,
         )
+
+    if child_texts:
+        from app.retriever import invalidate_bm25
+        invalidate_bm25(user_id)
 
     return {
         "filename":      filename,
@@ -137,5 +141,9 @@ def delete_document(title: str, user_id: str | None = None) -> int:
         if ids_to_delete:
             col.delete(ids=ids_to_delete)
             total += len(ids_to_delete)
+
+    if total:
+        from app.retriever import invalidate_bm25
+        invalidate_bm25(user_id)
 
     return total

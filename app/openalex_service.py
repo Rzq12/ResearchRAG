@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from app.config import get_settings
 from app.chunker import chunk_text
-from app.database import get_collection, embed_texts, make_doc_id
+from app.database import get_collection, embed_documents, make_doc_id
 
 
 # ─── Data Model ───────────────────────────────────────────────────────────────
@@ -156,6 +156,10 @@ def ingest_openalex_abstracts(
             if existing["ids"]:
                 continue
 
+            year = 0
+            if work.published[:4].isdigit():
+                year = int(work.published[:4])
+
             texts.append(chunk["text"])
             ids.append(doc_id)
             metadatas.append({
@@ -165,12 +169,14 @@ def ingest_openalex_abstracts(
                 "title":         work.title,
                 "authors":       ", ".join(work.authors),
                 "published":     work.published,
+                "year":          year,
                 "url":           work.url,
                 "chunk_index":   chunk["chunk_index"],
                 "page_num":      1,
                 "content_type":  "text",
                 "section_path":  "",
                 "section_title": "Abstract",
+                "section_label": "abstract",
                 "word_count":    len(chunk["text"].split()),
                 "parent_id":     "",
                 "concepts":      ", ".join(work.concepts),
@@ -178,13 +184,15 @@ def ingest_openalex_abstracts(
             })
 
     if texts:
-        embeddings = embed_texts(texts)
+        embeddings = embed_documents(texts)
         collection.add(
             documents  = texts,
             embeddings = embeddings,
             ids        = ids,
             metadatas  = metadatas,
         )
+        from app.retriever import invalidate_bm25
+        invalidate_bm25(user_id)
         print(f"[OpenAlex] Stored {len(texts)} new chunks from {len(works)} works")
 
 

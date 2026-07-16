@@ -1,0 +1,30 @@
+# Secrets — NEVER bake into the image (pass at runtime: --env-file .env)
+.env
+
+# Local data: ChromaDB index + auth DB (mounted as a volume instead)
+data/
+
+# Virtualenv & caches (huge; image installs its own deps)
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# VCS & CI
+.git/
+.github/
+.gitignore
+
+# Dev-only: tests & eval run outputs (eval harness itself is kept so
+# `python -m eval.run_eval` works inside the container)
+tests/
+eval/results/
+
+# Docs & local artifacts
+README.md
+PLAN_UPGRADE_RAG.md
+*.log
+.DS_Store
+Thumbs.db

@@ -4,10 +4,14 @@ Unified LLM client for ResearchRAG.
 Supports:
   - Groq  (Llama 4, Llama 3, Mixtral, DeepSeek, QwQ, …)
   - Google Gemini  (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash, …)
+  - Self-hosted OpenAI-compatible endpoints (vLLM / TGI / HF Inference) —
+    for serving your own fine-tuned model without changing app code.
 
 Provider is auto-detected from model name:
-  - starts with "gemini-" → Google Gemini  (needs GEMINI_API_KEY)
-  - anything else         → Groq           (needs GROQ_API_KEY)
+  - starts with "gemini-" → Google Gemini      (needs GEMINI_API_KEY)
+  - starts with "hf:"     → self-hosted server (needs HF_ENDPOINT_URL; the
+                            part after "hf:" is sent as the model name)
+  - anything else         → Groq               (needs GROQ_API_KEY)
 
 Usage:
     from app.llm_client import stream_llm, call_llm, get_provider
@@ -103,7 +107,9 @@ PROVIDER_HINTS: dict[str, tuple[str, str]] = {
 
 
 def get_provider(model: str) -> str:
-    """Returns 'gemini' or 'groq' based on model name."""
+    """Returns 'gemini', 'hf' (self-hosted), or 'groq' based on model name."""
+    if model.startswith("hf:"):
+        return "hf"
     if model.startswith("gemini"):
         return "gemini"
     return "groq"
@@ -251,6 +257,79 @@ def _stream_gemini(
             yield chunk.text
 
 
+# ─── Self-hosted (OpenAI-compatible: vLLM / TGI / HF Inference) ───────────────
+
+def _hf_endpoint_and_headers(api_key: str | None) -> tuple[str, dict]:
+    from app.config import get_settings
+    cfg = get_settings()
+    endpoint = (cfg.hf_endpoint_url or "").rstrip("/")
+    if not endpoint:
+        raise ValueError(
+            "Model prefix 'hf:' requires HF_ENDPOINT_URL in .env "
+            "(an OpenAI-compatible server such as vLLM or TGI)."
+        )
+    token   = api_key or cfg.hf_api_token
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return f"{endpoint}/v1/chat/completions", headers
+
+
+def _call_hf(
+    model: str,
+    messages: list[dict],
+    api_key: str | None,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    import httpx
+    url, headers = _hf_endpoint_and_headers(api_key)
+    payload = {
+        "model":       model.removeprefix("hf:"),
+        "messages":    messages,
+        "max_tokens":  max_tokens,
+        "temperature": temperature,
+    }
+    with httpx.Client(timeout=120) as client:
+        resp = client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+def _stream_hf(
+    model: str,
+    messages: list[dict],
+    api_key: str | None,
+    max_tokens: int,
+    temperature: float,
+) -> Generator[str, None, None]:
+    import json as _json
+    import httpx
+    url, headers = _hf_endpoint_and_headers(api_key)
+    payload = {
+        "model":       model.removeprefix("hf:"),
+        "messages":    messages,
+        "max_tokens":  max_tokens,
+        "temperature": temperature,
+        "stream":      True,
+    }
+    with httpx.Client(timeout=120) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    delta = _json.loads(data)["choices"][0]["delta"].get("content")
+                except (KeyError, IndexError, ValueError):
+                    continue
+                if delta:
+                    yield delta
+
+
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def call_llm(
@@ -264,6 +343,8 @@ def call_llm(
     provider = get_provider(model)
     if provider == "gemini":
         return _call_gemini(model, messages, api_key, max_tokens, temperature)
+    if provider == "hf":
+        return _call_hf(model, messages, api_key, max_tokens, temperature)
     return _call_groq(model, messages, api_key, max_tokens, temperature)
 
 
@@ -278,5 +359,7 @@ def stream_llm(
     provider = get_provider(model)
     if provider == "gemini":
         yield from _stream_gemini(model, messages, api_key, max_tokens, temperature)
+    elif provider == "hf":
+        yield from _stream_hf(model, messages, api_key, max_tokens, temperature)
     else:
         yield from _stream_groq(model, messages, api_key, max_tokens, temperature)
