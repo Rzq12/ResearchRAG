@@ -877,19 +877,13 @@ with tab_chat:
                 )
                 full_answer = st.write_stream(gen)
             except Exception as _exc:
-                _err = str(_exc)
-                if "413" in _err or "tokens" in _err.lower() or "rate_limit" in _err.lower():
-                    full_answer = (
-                        "⚠️ **Konteks terlalu besar untuk model ini.**\n\n"
-                        f"Error: `{_err[:200]}`\n\n"
-                        "✨ **Solusi terbaik:** Pilih **Gemini 2.5 Flash** di sidebar — 1M context, gratis\n"
-                        "⚡ **Alternatif:** Llama 3.1 8B Instant (Groq) — paling cepat\n"
-                        "🔧 **Atau:** Turunkan `TOP_K_RETRIEVAL` di `.env` ke `5`"
-                    )
-                    refs, oa_count, up_count = [], 0, 0
-                    st.markdown(full_answer)
-                else:
-                    raise
+                from app.llm_client import friendly_llm_error
+
+                _, full_answer = friendly_llm_error(_exc)
+                refs, oa_count, up_count = [], 0, 0
+                st.markdown(full_answer)
+                with st.expander("🔧 Detail teknis"):
+                    st.code(str(_exc)[:600], language=None)
 
             # Reasoning (<think> block), captured by split_think_stream
             if _think.get("think"):

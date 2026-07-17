@@ -330,6 +330,84 @@ def _stream_hf(
                     yield delta
 
 
+# ─── Error classification ─────────────────────────────────────────────────────
+
+def friendly_llm_error(exc: Exception) -> tuple[str, str]:
+    """
+    Map a raw provider exception to a user-friendly chat message.
+
+    Args:
+        exc: Exception raised by any provider call (Groq / Gemini / self-hosted).
+
+    Returns:
+        Tuple of (category, markdown_message) where category is one of
+        "rate_limit", "auth", "context", "model_unavailable", "network",
+        "unknown" — and markdown_message is safe to show to end users
+        (no stack trace, no raw API payload).
+    """
+    err = str(exc).lower()
+
+    if any(s in err for s in (
+        "429", "resource_exhausted", "rate limit", "rate_limit", "rate-limit",
+        "quota", "too many requests",
+    )):
+        return "rate_limit", (
+            "⏳ **Kuota API tercapai (rate limit).**\n\n"
+            "Model yang dipilih sudah mencapai batas pemakaian untuk saat ini.\n\n"
+            "**Yang bisa dilakukan:**\n"
+            "- Tunggu beberapa menit lalu kirim ulang pertanyaan\n"
+            "- Ganti model lain di sidebar (mis. ⚡ Llama 3.1 8B Instant via Groq)\n"
+            "- Atau gunakan API key dengan kuota lebih besar"
+        )
+
+    if any(s in err for s in (
+        "401", "403", "api key", "api_key", "invalid_api_key",
+        "permission_denied", "unauthorized", "authentication",
+    )):
+        return "auth", (
+            "🔑 **API key tidak valid atau tidak punya akses.**\n\n"
+            "Periksa kembali API key di sidebar — pastikan key sesuai dengan "
+            "provider model yang dipilih (Gemini key untuk model Gemini, "
+            "Groq key untuk model Groq)."
+        )
+
+    if any(s in err for s in (
+        "413", "context_length", "request too large", "payload too large",
+        "token count exceeds", "tokens per minute", "input is too long",
+    )):
+        return "context", (
+            "⚠️ **Konteks terlalu besar untuk model ini.**\n\n"
+            "✨ **Solusi terbaik:** Pilih model Gemini di sidebar — context window besar\n"
+            "⚡ **Alternatif:** Llama 3.1 8B Instant (Groq) — paling cepat\n"
+            "🔧 **Atau:** Turunkan `TOP_K_RETRIEVAL` di `.env` ke `5`"
+        )
+
+    if any(s in err for s in (
+        "404", "not_found", "not found", "decommissioned", "does not exist",
+        "deprecated",
+    )):
+        return "model_unavailable", (
+            "❓ **Model tidak tersedia.**\n\n"
+            "Model yang dipilih mungkin sudah dinonaktifkan oleh provider. "
+            "Pilih model lain di sidebar."
+        )
+
+    if any(s in err for s in (
+        "timeout", "timed out", "connection", "unavailable", "503",
+        "network", "dns", "unreachable",
+    )):
+        return "network", (
+            "🌐 **Gagal terhubung ke server LLM.**\n\n"
+            "Periksa koneksi internet, atau coba lagi beberapa saat — "
+            "server provider mungkin sedang sibuk."
+        )
+
+    return "unknown", (
+        "⚠️ **Terjadi kesalahan saat menghasilkan jawaban.**\n\n"
+        "Silakan coba lagi. Jika masih gagal, ganti model di sidebar."
+    )
+
+
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def call_llm(
