@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { ArrowRight, MagnifyingGlass, Sparkle } from "@phosphor-icons/react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -162,7 +162,8 @@ export function SemanticSearchPanel() {
                     {results.length} hits
                   </span>
                 </div>
-                <div className="space-y-2.5">
+                {/* Cascade follows rank order — the top hit lands first. */}
+                <div className="stagger-in space-y-2.5">
                   {results.map((hit, i) => (
                     <ResultCard key={i} hit={hit} index={i + 1} />
                   ))}
@@ -256,8 +257,8 @@ function ResultSkeletons() {
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
-          className="animate-pulse rounded-[18px] border border-white/[0.06] bg-white/[0.02] p-4"
-          style={{ animationDelay: `${i * 90}ms` }}
+          className="sheen rounded-[18px] border border-white/[0.06] bg-white/[0.02] p-4"
+          style={{ "--sheen-delay": `${i * 130}ms` } as CSSProperties}
         >
           <div className="h-3 w-1/3 rounded-full bg-white/[0.06]" />
           <div className="mt-3.5 h-2.5 w-full rounded-full bg-white/[0.04]" />

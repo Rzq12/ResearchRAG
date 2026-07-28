@@ -172,7 +172,7 @@ export function OpenAlexSearch() {
 
         {results.length > 0 && (
           <Collapsible title={`Results (${results.length})`} defaultOpen>
-            <div className="space-y-3">
+            <div className="stagger-in space-y-3">
               {results.map((w) => (
                 <div key={w.openalex_id} className="text-xs">
                   <a

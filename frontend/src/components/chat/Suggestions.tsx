@@ -13,7 +13,7 @@ export function Suggestions({ suggestions, onPick, disabled }: SuggestionsProps)
       <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
         <Lightbulb className="h-3.5 w-3.5 text-accent" /> Suggested questions
       </p>
-      <div className="flex flex-wrap gap-2">
+      <div className="stagger-in flex flex-wrap gap-2">
         {suggestions.map((s, i) => (
           <button
             key={i}

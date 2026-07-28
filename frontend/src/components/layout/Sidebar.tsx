@@ -35,7 +35,7 @@ export function SidebarContent({ showIdentity = false, nav, onNavigate }: Sideba
   const { kbOnly, setKbOnly } = useSettings();
 
   return (
-    <div className="flex flex-col gap-3.5 pt-1">
+    <div className="stagger-in flex flex-col gap-3.5 pt-1">
       {showIdentity && (
         <RailCard>
           <div className="flex items-center gap-2.5">

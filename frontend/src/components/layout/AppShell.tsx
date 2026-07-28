@@ -1,18 +1,21 @@
 import { useState, type ReactNode } from "react";
-import { Database, Flask, List, SignOut, X } from "@phosphor-icons/react";
+import { Database, Flask, List, SidebarSimple, SignOut, X } from "@phosphor-icons/react";
 
 import { SidebarContent } from "./Sidebar";
 import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { cn } from "@/lib/utils";
 
 /**
  * Workspace shell: a floating glass island nav on top, the thread in the
- * centre, and the source/ingest rail on the right. The rail collapses into the
- * existing off-canvas drawer below `lg`.
+ * centre, and the source/ingest rail on the right. The rail is collapsible on
+ * desktop (state persists across reloads) and becomes the off-canvas drawer
+ * below `lg`.
  */
 export function AppShell({ nav, children }: { nav?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [railOpen, setRailOpen] = useLocalStorage<boolean>("rr_rail_open", true);
   const { session, logout } = useAuth();
   const { kbOnly, setKbOnly } = useSettings();
 
@@ -56,6 +59,17 @@ export function AppShell({ nav, children }: { nav?: ReactNode; children: ReactNo
               <Database className="h-3.5 w-3.5" />
               {kbOnly ? "Library only" : "Library + web"}
             </button>
+            {/* Desktop-only: below `lg` the rail is the drawer, which has its
+                own trigger on the left of the island. */}
+            <button
+              onClick={() => setRailOpen(!railOpen)}
+              className={cn("icon-btn hidden lg:grid", railOpen && "text-accent")}
+              title={railOpen ? "Hide sources rail" : "Show sources rail"}
+              aria-label={railOpen ? "Hide sources rail" : "Show sources rail"}
+              aria-expanded={railOpen}
+            >
+              <SidebarSimple className="h-4 w-4" />
+            </button>
             <button
               onClick={logout}
               className="icon-btn"
@@ -68,10 +82,21 @@ export function AppShell({ nav, children }: { nav?: ReactNode; children: ReactNo
         </div>
       </header>
 
-      {/* Thread + rail */}
-      <div className="relative z-10 grid min-h-0 flex-1 gap-6 px-4 pb-4 pt-1 lg:grid-cols-[minmax(0,1fr)_clamp(288px,26vw,352px)] lg:px-6">
+      {/* Thread + rail — full bleed, so the rail stays flush with the right
+          edge. Collapsing it hands the whole width back to the thread. */}
+      <div
+        className={cn(
+          "relative z-10 grid min-h-0 flex-1 gap-6 px-4 pb-4 pt-1 lg:px-6",
+          railOpen && "lg:grid-cols-[minmax(0,1fr)_clamp(288px,26vw,352px)]",
+        )}
+      >
         <main className="min-h-0 min-w-0">{children}</main>
-        <aside className="hidden min-h-0 overflow-y-auto scrollbar-thin pb-2 lg:block">
+        <aside
+          className={cn(
+            "hidden min-h-0 overflow-y-auto scrollbar-thin pb-2",
+            railOpen && "rail-in lg:block",
+          )}
+        >
           <SidebarContent />
         </aside>
       </div>

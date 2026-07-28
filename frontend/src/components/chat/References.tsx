@@ -28,7 +28,8 @@ export function References({ references }: { references: Reference[] }) {
         </span>
       }
     >
-      <ol className="space-y-2">
+      {/* Citations land in citation order, so [1] reads before [2]. */}
+      <ol className="stagger-in space-y-2">
         {references.map((ref, i) => (
           <li
             key={`${ref.url}-${i}`}
