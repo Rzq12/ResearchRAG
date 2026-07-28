@@ -1,0 +1,126 @@
+"""
+OpenAlex endpoints: search, ingest (abstracts / full-text / both), citation
+network, topic classification, and query suggestions.
+
+All heavy work (HTTP to OpenAlex, embedding, PDF download) runs in Starlette's
+threadpool because these handlers are declared ``def`` (not ``async def``).
+"""
+
+from fastapi import APIRouter, HTTPException
+
+from app.openalex_service import (
+    OpenAlexWork,
+    fetch_citation_network,
+    ingest_openalex_abstracts,
+    search_openalex,
+)
+from app.fulltext_service import fetch_fulltext_batch
+from app.rag import generate_query_suggestions
+from app.topic_classifier import classify_topics_batch
+
+from api.schemas import (
+    CitationsRequest,
+    CitationsResponse,
+    FulltextSummary,
+    IngestOpenAlexRequest,
+    IngestOpenAlexResponse,
+    OpenAlexWorkModel,
+    SearchRequest,
+    SearchResponse,
+    SuggestionsRequest,
+    SuggestionsResponse,
+    TopicsRequest,
+    TopicsResponse,
+)
+from api.serialize import work_to_dict
+
+router = APIRouter(prefix="/api/openalex", tags=["openalex"])
+
+
+def _to_work(model: OpenAlexWorkModel) -> OpenAlexWork:
+    """Rebuild a backend dataclass from the wire model (for ingest calls)."""
+    return OpenAlexWork(
+        openalex_id=model.openalex_id,
+        title=model.title,
+        authors=list(model.authors),
+        abstract=model.abstract,
+        published=model.published,
+        url=model.url,
+        referenced_works=list(model.referenced_works),
+        concepts=list(model.concepts),
+        citation_count=model.citation_count,
+    )
+
+
+@router.post("/search", response_model=SearchResponse)
+def search(body: SearchRequest) -> SearchResponse:
+    """Search OpenAlex and return enriched work metadata (no ingestion)."""
+    try:
+        works = search_openalex(
+            body.query,
+            max_results=body.max_results,
+            api_key=body.api_key,
+        )
+    except Exception as exc:  # httpx errors → surfaced to the client
+        raise HTTPException(status_code=502, detail=f"OpenAlex error: {exc}") from exc
+    return SearchResponse(works=[work_to_dict(w) for w in works])  # type: ignore[list-item]
+
+
+@router.post("/ingest", response_model=IngestOpenAlexResponse)
+def ingest(body: IngestOpenAlexRequest) -> IngestOpenAlexResponse:
+    """Ingest previously-searched works into the user's knowledge base."""
+    works = [_to_work(w) for w in body.works]
+    if not works:
+        return IngestOpenAlexResponse(abstracts_ingested=0, fulltext=None)
+
+    abstracts_ingested = 0
+    fulltext: FulltextSummary | None = None
+
+    if body.mode in ("abstracts", "both"):
+        ingest_openalex_abstracts(works, user_id=body.user_id)
+        abstracts_ingested = len(works)
+
+    if body.mode in ("fulltext", "both"):
+        result = fetch_fulltext_batch(works, user_id=body.user_id)
+        fulltext = FulltextSummary(**result)
+
+    return IngestOpenAlexResponse(
+        abstracts_ingested=abstracts_ingested,
+        fulltext=fulltext,
+    )
+
+
+@router.post("/citations", response_model=CitationsResponse)
+def citations(body: CitationsRequest) -> CitationsResponse:
+    """Fetch the reference network ({openalex_id: title}) for one work."""
+    refs = fetch_citation_network(body.openalex_id, api_key=body.api_key)
+    return CitationsResponse(references=refs or {})
+
+
+@router.post("/topics", response_model=TopicsResponse)
+def topics(body: TopicsRequest) -> TopicsResponse:
+    """Classify works into research topics via the Groq LLM."""
+    works = [_to_work(w) for w in body.works]
+    model = body.model or "llama-3.3-70b-versatile"
+    labels = classify_topics_batch(works, groq_api_key=body.groq_api_key, groq_model=model)
+    return TopicsResponse(labels=labels)
+
+
+@router.post("/suggestions", response_model=SuggestionsResponse)
+def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
+    """Generate follow-up research questions from ingested works or titles."""
+    if body.works:
+        works_or_titles: list = [_to_work(w) for w in body.works]
+    else:
+        works_or_titles = list(body.titles or [])
+
+    if not works_or_titles:
+        return SuggestionsResponse(suggestions=[])
+
+    result = generate_query_suggestions(
+        works_or_titles,
+        api_key=body.api_key,
+        model=body.model,
+        n=body.n,
+    )
+    return SuggestionsResponse(suggestions=result)

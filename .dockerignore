@@ -22,6 +22,16 @@ __pycache__/
 tests/
 eval/results/
 
+# React frontend — deployed separately to Vercel, not needed in this image
+# (node_modules alone is huge). The backend container only serves Streamlit+API.
+frontend/
+**/node_modules/
+
+# Knowledge-graph output & agent scratch
+graphify-out/
+.agents/
+skills-lock.json
+
 # Docs & local artifacts
 README.md
 PLAN_UPGRADE_RAG.md

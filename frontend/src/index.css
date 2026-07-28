@@ -1,0 +1,171 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    /* Off-black, never pure #000. Geist as the base type. */
+    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    @apply bg-accent/25 text-white;
+  }
+}
+
+@layer components {
+  /* Thin, restrained scrollbars. */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-zinc-700/60;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-600/70;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* For the composer: grows, but never shows a native scrollbar. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  /* Hairline separators & surfaces. */
+  .hairline {
+    @apply border-white/[0.07];
+  }
+
+  /* "Double-bezel" nested cards — outer shell + inner core, concentric radii. */
+  .bezel {
+    @apply rounded-[1.625rem] border border-white/[0.07] bg-white/[0.03] p-1.5;
+  }
+  .bezel-core {
+    @apply rounded-[calc(1.625rem-0.375rem)] border border-white/[0.05] bg-zinc-900/70;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  /* Floating glass "island" nav — detached from the top edge. */
+  .island {
+    @apply flex items-center gap-3 rounded-full border border-white/[0.08] bg-zinc-900/60 p-2 pl-4
+      shadow-[0_22px_50px_-28px_rgba(0,0,0,0.95)] backdrop-blur-xl;
+    box-shadow:
+      0 22px 50px -28px rgba(0, 0, 0, 0.95),
+      inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  }
+
+  /* Pill controls (nav tabs, toggles, scope switches). */
+  .pill {
+    @apply flex items-center gap-2 whitespace-nowrap rounded-full border border-transparent px-4 py-2
+      text-[13px] text-zinc-400 transition-all duration-[450ms] ease-smooth
+      hover:bg-white/[0.05] hover:text-zinc-100 active:scale-[0.98];
+  }
+  .pill-active {
+    @apply border-accent/30 bg-accent/[0.12] text-accent-soft hover:bg-accent/[0.16] hover:text-accent-soft;
+  }
+
+  /* Circular icon button used inside islands and headers. */
+  .icon-btn {
+    @apply grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/[0.08] bg-white/[0.03]
+      text-zinc-400 transition-all duration-[450ms] ease-smooth
+      hover:-translate-y-px hover:bg-white/[0.07] hover:text-zinc-100 active:scale-95;
+  }
+
+  /* Fixed film-grain overlay — breaks digital flatness without repainting on scroll. */
+  .grain {
+    @apply pointer-events-none fixed inset-0 z-[45] opacity-[0.05];
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+  }
+
+  /* Range sliders — thin accent track, floating knob, no native chrome. */
+  .range-accent {
+    @apply h-1 w-full cursor-pointer appearance-none rounded-full bg-white/[0.09];
+  }
+  .range-accent::-webkit-slider-thumb {
+    @apply h-3.5 w-3.5 appearance-none rounded-full border-none bg-accent transition-transform duration-[400ms] ease-smooth;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+  }
+  .range-accent:hover::-webkit-slider-thumb {
+    transform: scale(1.12);
+  }
+  .range-accent:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+  .range-accent::-moz-range-thumb {
+    @apply h-3.5 w-3.5 rounded-full border-none bg-accent;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+  }
+  .range-accent::-moz-range-track {
+    @apply h-1 rounded-full bg-white/[0.09];
+  }
+
+  /* All numeric data: mono + tabular figures so columns line up. */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+
+  /* Micro eyebrow label above section headings. */
+  .eyebrow {
+    @apply text-[10px] uppercase tracking-[0.2em] text-zinc-500;
+  }
+
+  /* Markdown answer/summary rendering. */
+  .prose-chat {
+    @apply text-[15.5px] leading-[1.72] text-zinc-200;
+  }
+  .prose-chat p {
+    @apply my-2.5;
+    text-wrap: pretty;
+  }
+  .prose-chat ul {
+    @apply my-2 list-disc space-y-1 pl-5 marker:text-zinc-600;
+  }
+  .prose-chat ol {
+    @apply my-2 list-decimal space-y-1 pl-5 marker:text-zinc-600;
+  }
+  .prose-chat h1,
+  .prose-chat h2,
+  .prose-chat h3 {
+    @apply mt-3 mb-1 font-medium tracking-tight text-white;
+  }
+  .prose-chat code {
+    @apply rounded bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[13px] text-accent-soft;
+  }
+  .prose-chat pre {
+    @apply my-2 overflow-x-auto rounded-xl border border-white/[0.05] bg-zinc-900 p-3 text-[13px];
+  }
+  .prose-chat pre code {
+    @apply bg-transparent p-0 text-zinc-200;
+  }
+  .prose-chat a {
+    @apply text-accent underline decoration-accent/30 underline-offset-2 transition-colors hover:text-accent-soft;
+  }
+  .prose-chat table {
+    @apply my-2 block w-full overflow-x-auto text-sm;
+  }
+  .prose-chat th,
+  .prose-chat td {
+    @apply border border-white/[0.07] px-2 py-1;
+  }
+  .prose-chat blockquote {
+    @apply my-2 border-l-2 border-zinc-700 pl-3 text-zinc-400;
+  }
+}

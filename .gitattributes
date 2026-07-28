@@ -1,0 +1,5 @@
+# Shell scripts and nginx templates run inside the Linux container — they MUST
+# keep LF endings even when checked out on Windows, or bash/nginx will choke.
+*.sh              text eol=lf
+deploy/start.sh   text eol=lf
+deploy/*.template text eol=lf
