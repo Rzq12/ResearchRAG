@@ -5,6 +5,10 @@ import { IconContext } from "@phosphor-icons/react";
 
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
+// KaTeX ships its own metric-critical fonts; without this stylesheet formulas
+// render as unaligned plain text. Imported here rather than via an @import in
+// index.css so Vite fingerprints the woff2 files as regular assets.
+import "katex/dist/katex.min.css";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
