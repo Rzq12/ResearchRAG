@@ -23,11 +23,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.auth import init_auth_db
+from app.config import get_settings
 from app.database import init_chroma
+from app.reranker import warm_reranker
 from app.sessions import init_sessions_db, purge_expired
 
 from api.errors import register_exception_handlers
@@ -54,6 +55,13 @@ async def lifespan(app: FastAPI):
     init_chroma()
     init_auth_db()
     init_sessions_db()
+    # Warm the cross-encoder here too. init_chroma()/get_embedder() covered the
+    # embedder but not the reranker, so its ~500 MB load landed on whichever
+    # request arrived first — and on a cold container several concurrent first
+    # requests each started their own copy.
+    _cfg = get_settings()
+    if getattr(_cfg, "enable_reranker", False):
+        warm_reranker(_cfg.reranker_model)
     removed = purge_expired()
     logger.info(
         "api_ready",
@@ -91,7 +99,6 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
-app.add_exception_handler(RateLimitExceeded, app.exception_handlers[RateLimitExceeded])
 
 # ── Routers — one per resource group ─────────────────────────────────────────
 app.include_router(meta.router)

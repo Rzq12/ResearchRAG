@@ -6,6 +6,8 @@ All heavy work (HTTP to OpenAlex, embedding, PDF download) runs in Starlette's
 threadpool because these handlers are declared ``def`` (not ``async def``).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.openalex_service import (
@@ -35,6 +37,8 @@ from api.schemas import (
 from api.rate_limit import limiter
 from api.security import current_user
 from api.serialize import work_to_dict
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/openalex", tags=["openalex"])
 
@@ -68,9 +72,16 @@ def search(
             max_results=body.max_results,
             api_key=body.api_key,
         )
-    except Exception as exc:  # httpx errors → surfaced to the client
-        raise HTTPException(status_code=502, detail=f"OpenAlex error: {exc}") from exc
-    return SearchResponse(works=[work_to_dict(w) for w in works])  # type: ignore[list-item]
+    except Exception as exc:
+        # NEVER interpolate the upstream exception. httpx renders the full
+        # request URL in its message, and app.openalex_service sends the API key
+        # as a query parameter — which defaults to the SERVER's key when the
+        # caller omits one. `detail=f"...{exc}"` handed that credential to any
+        # authenticated user who could provoke a 4xx (e.g. an oversized
+        # max_results, now bounded in api/schemas.py).
+        logger.warning("openalex_search_failed", exc_info=exc)
+        raise HTTPException(status_code=502, detail="OpenAlex request failed.") from exc
+    return SearchResponse(works=[OpenAlexWorkModel(**work_to_dict(w)) for w in works])
 
 
 @router.post("/ingest", response_model=IngestOpenAlexResponse)

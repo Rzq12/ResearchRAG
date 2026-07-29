@@ -14,6 +14,7 @@ Audit reproductions this closes:
 from __future__ import annotations
 
 from fastapi import HTTPException, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 
@@ -21,6 +22,8 @@ from app.config import get_settings
 # bytes first, so we scan a small prefix rather than demanding offset 0.
 _PDF_MAGIC = b"%PDF-"
 _MAGIC_SEARCH_WINDOW = 1024
+
+_READ_CHUNK = 1 << 20  # 1 MiB
 
 _ALLOWED_CONTENT_TYPES = {
     "application/pdf",
@@ -48,16 +51,30 @@ async def read_validated_pdf(file: UploadFile) -> bytes:
     if declared not in _ALLOWED_CONTENT_TYPES:
         raise _reject(f"Unsupported content type '{declared}'. Only PDF files are accepted.")
 
-    content = await file.read()
-
-    if not content:
-        raise _reject("The uploaded file is empty.")
-
-    if len(content) > max_bytes:
-        raise HTTPException(
+    def _too_large() -> HTTPException:
+        return HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds the {cfg.max_upload_mb} MB limit.",
         )
+
+    # Check the declared size first, then stream with a running total. Reading
+    # the whole body before measuring it meant the limit rejected the upload but
+    # never protected the worker: N concurrent oversized posts were all fully
+    # resident before the first 413 was raised.
+    if file.size is not None and file.size > max_bytes:
+        raise _too_large()
+
+    parts: list[bytes] = []
+    total = 0
+    while blob := await file.read(_READ_CHUNK):
+        total += len(blob)
+        if total > max_bytes:
+            raise _too_large()
+        parts.append(blob)
+    content = b"".join(parts)
+
+    if not content:
+        raise _reject("The uploaded file is empty.")
 
     # Content sniffing — the filename and declared type are both client-supplied
     # and therefore untrusted.
@@ -67,7 +84,10 @@ async def read_validated_pdf(file: UploadFile) -> bytes:
             "Renaming another file type to .pdf will not work."
         )
 
-    _assert_parseable(content)
+    # fitz.open() parses the xref table in a C extension — tens of ms on a large
+    # document, and this is one of the two `async def` handlers. Keep it off the
+    # event loop so a malformed 20 MB upload cannot stall every other request.
+    await run_in_threadpool(_assert_parseable, content)
     return content
 
 

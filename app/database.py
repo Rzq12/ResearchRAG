@@ -11,20 +11,29 @@ from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 from app.config import get_settings
 import hashlib
+import logging
+import threading
+
+logger = logging.getLogger(__name__)
 
 _client      = None
 _collections: dict[str, chromadb.Collection] = {}
 _embedder    = None
+_embedder_lock = threading.Lock()
 
 
 # ─── Embedder ─────────────────────────────────────────────────────────────────
 
 def get_embedder() -> SentenceTransformer:
     global _embedder
+    # Same race as the reranker: concurrent threadpool workers could each see
+    # None and each load a ~1.1 GB model. Double-checked locking bounds it to one.
     if _embedder is None:
-        cfg = get_settings()
-        print(f"[Embedder] Loading {cfg.embedding_model}...")
-        _embedder = SentenceTransformer(cfg.embedding_model)
+        with _embedder_lock:
+            if _embedder is None:
+                cfg = get_settings()
+                logger.info("embedder_loading model=%s", cfg.embedding_model)
+                _embedder = SentenceTransformer(cfg.embedding_model)
     return _embedder
 
 

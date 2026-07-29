@@ -9,6 +9,7 @@ account cannot reach another's collection.
 """
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from app.database import get_collection, get_parent_collection
 from app.pdf_service import delete_document, ingest_pdf, list_uploaded_docs
@@ -62,7 +63,15 @@ async def upload_pdf(
     content = await read_validated_pdf(file)
 
     try:
-        result = ingest_pdf(content, file.filename or "upload.pdf", user_id=user_id)
+        # ingest_pdf is fully synchronous and CPU-bound: layout parsing, optional
+        # Tesseract OCR, then a sentence-transformers forward pass per chunk.
+        # Called directly from this `async def` it pinned the event loop for the
+        # whole ingest, so SSE streams froze and /api/health stopped answering —
+        # long enough for the Docker HEALTHCHECK to restart the container
+        # mid-ingest. Starlette's threadpool keeps the loop responsive.
+        result = await run_in_threadpool(
+            ingest_pdf, content, file.filename or "upload.pdf", user_id=user_id
+        )
     except ValueError as exc:
         # e.g. image-only PDF with no OCR available — a client-side problem.
         raise HTTPException(
@@ -89,7 +98,9 @@ def summarize(
 
 
 @router.delete("", response_model=DeleteDocumentResponse)
+@limiter.limit("10/minute")
 def delete(
+    request: Request,
     body: DeleteDocumentRequest,
     user_id: str = Depends(current_user),
 ) -> DeleteDocumentResponse:
@@ -98,11 +109,18 @@ def delete(
 
 
 @router.post("/clear", response_model=ClearResponse)
-def clear_all(user_id: str = Depends(current_user)) -> ClearResponse:
+@limiter.limit("5/minute")
+def clear_all(
+    request: Request,
+    user_id: str = Depends(current_user),
+) -> ClearResponse:
     """Delete every chunk (child + parent) for the authenticated user."""
     cleared = 0
     for col in (get_collection(user_id), get_parent_collection(user_id)):
-        ids = col.get()["ids"]
+        # include=[] — ids come back regardless, and the default
+        # include=["metadatas","documents"] pulled every chunk's full text into
+        # RAM just to read the ids (~35 MB for a 40k-chunk KB, twice).
+        ids = col.get(include=[])["ids"]
         if ids:
             col.delete(ids=ids)
             cleared += len(ids)

@@ -62,13 +62,18 @@ def _event_stream(body: ChatRequest, user_id: str) -> Iterator[str]:
         yield _sse("error", {"category": category, "message": message})
         yield _sse("done", {})
         return
+    finally:
+        # A client that navigates away abandons this generator. Starlette drives
+        # it through iterate_in_threadpool, so cancellation cannot interrupt the
+        # in-flight next() — without an explicit close() the upstream LLM
+        # connection was only released whenever GC got round to it, and enough
+        # abandoned streams drained the threadpool.
+        close = getattr(gen, "close", None)
+        if close is not None:
+            close()
 
     # think_holder is only populated once the generator is fully consumed.
-    reasoning = ""
-    try:
-        reasoning = think_holder.get("think", "") if think_holder else ""
-    except Exception:
-        reasoning = ""
+    reasoning = think_holder.get("think", "") if think_holder else ""
 
     yield _sse(
         "meta",

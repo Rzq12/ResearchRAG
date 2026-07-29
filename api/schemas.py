@@ -84,20 +84,23 @@ class OpenAlexWorkModel(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
-    max_results: int = 5
+    query: str = Field(..., min_length=1, max_length=4000)
+    # Bounded because OpenAlex caps per_page at 200: an unbounded value produced
+    # an upstream 400 whose error string carried the server's API key back to
+    # the caller (see api/routers/openalex.py).
+    max_results: int = Field(5, ge=1, le=50)
     api_key: str | None = None  # optional OpenAlex key
 
 
 class SearchResponse(BaseModel):
-    works: list[OpenAlexWorkModel]
+    works: list[OpenAlexWorkModel] = Field(..., max_length=50)
 
 
 IngestMode = Literal["abstracts", "fulltext", "both"]
 
 
 class IngestOpenAlexRequest(BaseModel):
-    works: list[OpenAlexWorkModel]
+    works: list[OpenAlexWorkModel] = Field(..., max_length=50)
     mode: IngestMode = "abstracts"
 
 
@@ -131,7 +134,7 @@ class CitationsResponse(BaseModel):
 
 
 class TopicsRequest(BaseModel):
-    works: list[OpenAlexWorkModel]
+    works: list[OpenAlexWorkModel] = Field(..., max_length=50)
     groq_api_key: str
     model: str | None = None
 
@@ -146,7 +149,7 @@ class SuggestionsRequest(BaseModel):
     titles: list[str] | None = None
     api_key: str
     model: str | None = None
-    n: int = 5
+    n: int = Field(5, ge=1, le=20)
 
 
 class SuggestionsResponse(BaseModel):
@@ -223,8 +226,8 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    query: str
-    chat_history: list[ChatMessage] = Field(default_factory=list)
+    query: str = Field(..., min_length=1, max_length=4000)
+    chat_history: list[ChatMessage] = Field(default_factory=list, max_length=40)
     api_key: str
     model: str | None = None
     where: dict[str, Any] | None = None  # optional Chroma metadata filter
@@ -236,8 +239,8 @@ class ChatRequest(BaseModel):
 # ─── Semantic search ──────────────────────────────────────────────────────────
 
 class SemanticSearchRequest(BaseModel):
-    query: str
-    top_k: int = 15
+    query: str = Field(..., min_length=1, max_length=4000)
+    top_k: int = Field(15, ge=1, le=100)
     content_type_filter: str | None = None
     min_score: float = 0.0
 

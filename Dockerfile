@@ -55,6 +55,14 @@ RUN adduser --disabled-password --gecos "" --uid 10001 appuser \
 
 USER appuser
 
+# api/settings.py only enforces the JWT-secret and CORS guardrails when this is
+# not "development", and its default IS "development" — so a deploy that forgot
+# to set it booted happily with a per-process random JWT secret (logging every
+# user out on each restart), a localhost-only CORS allowlist, and /docs public.
+# Setting it here makes the container fail closed; override to "development"
+# explicitly for local runs.
+ENV ENVIRONMENT=production
+
 EXPOSE 8501
 
 # Probes BOTH services: a dead API behind a live Streamlit used to report

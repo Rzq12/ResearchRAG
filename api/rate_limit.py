@@ -39,4 +39,12 @@ def _identify(request: Request) -> str:
 # decorated endpoint to accept a `response: Response` parameter, which would
 # leak a transport concern into each handler's signature. Enforcement (and the
 # 429 response) is unaffected — only the advisory headers are omitted.
-limiter = Limiter(key_func=_identify, headers_enabled=False)
+# default_limits is what makes the module docstring true. Without it slowapi
+# evaluates an EMPTY limit list for every undecorated route, so /api/ready,
+# /auth/logout, /auth/me and the whole documents read surface were unlimited —
+# each one touching Chroma or SQLite from a finite threadpool.
+limiter = Limiter(
+    key_func=_identify,
+    default_limits=["120/minute"],
+    headers_enabled=False,
+)
