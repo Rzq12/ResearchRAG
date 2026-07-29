@@ -9,8 +9,11 @@ ever locked out by the migration.
 No external dependencies beyond the standard library.
 """
 
+import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from app.security import (
     hash_password,
@@ -24,14 +27,35 @@ _DB_PATH = Path("./data/users.db")
 
 # ─── DB Setup ────────────────────────────────────────────────────────────────
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    """
+    Open a connection and guarantee it is CLOSED.
+
+    ``with sqlite3.connect(...) as db`` commits or rolls back the *transaction*
+    but never closes the *connection* — a detail that leaked one file descriptor
+    per login, refresh and logout. A worker under sustained token refresh
+    eventually hit the fd ulimit and every subsequent connect raised
+    "unable to open database file", taking auth down entirely.
+
+    The inner ``with db`` preserves the commit/rollback behaviour every existing
+    call site already relies on.
+    """
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+    db = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
 
 
 def init_auth_db() -> None:
     """Create the users table if it doesn't exist."""
     with _conn() as db:
+        # WAL lets readers proceed during a write, which removes the sporadic
+        # "database is locked" seen when several requests hit auth at once.
+        db.execute("PRAGMA journal_mode=WAL")
         db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 username     TEXT PRIMARY KEY,
@@ -60,10 +84,13 @@ def register_user(username: str, display_name: str, password: str) -> tuple[bool
     username = _normalize(username)
     display_name = display_name.strip() or username
 
-    if len(username) < 3:
-        return False, "Username minimal 3 karakter."
-    if not username.isalnum() and "_" not in username:
-        return False, "Username hanya boleh huruf, angka, dan underscore."
+    # `not isalnum() and "_" not in username` was an and/or inversion: any
+    # string containing an underscore skipped the check entirely, so "ab_c!@#"
+    # was accepted despite the message promising otherwise.
+    if not re.fullmatch(r"[a-z0-9_]{3,32}", username):
+        if len(username) < 3:
+            return False, "Username minimal 3 karakter."
+        return False, "Username hanya boleh huruf, angka, dan underscore (3-32 karakter)."
 
     # Policy applies to new passwords only — existing accounts are untouched.
     ok, message = validate_password(password)

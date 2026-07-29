@@ -90,6 +90,17 @@ export async function streamChat(
     return;
   }
 
+  // The backend sleeps when idle; while it reloads its models the proxy returns
+  // 502/503/504. That is a wait, not a failure — say so rather than showing a
+  // raw gateway error.
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    handlers.onError(
+      "The server is waking up and loading its models. Give it a minute, then send your question again.",
+    );
+    handlers.onDone();
+    return;
+  }
+
   if (!res.ok || !res.body) {
     let detail = `Chat request failed (${res.status}).`;
     try {

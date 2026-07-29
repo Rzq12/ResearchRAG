@@ -14,17 +14,36 @@ Enable via config: ENABLE_RERANKER=true (default on).
 
 from __future__ import annotations
 
+import logging
 import math
+import threading
+
+logger = logging.getLogger(__name__)
 
 _cross_encoders: dict[str, object] = {}
+# Under Streamlit this init was effectively serialised. FastAPI runs every sync
+# handler in a 40-slot threadpool, so N concurrent first-requests each saw an
+# empty dict and each loaded its own ~500 MB CrossEncoder — OOM in a 2 GB
+# container. Double-checked locking makes exactly one load win.
+_cross_encoder_lock = threading.Lock()
 
 
 def _get_cross_encoder(model_name: str):
-    if model_name not in _cross_encoders:
-        from sentence_transformers import CrossEncoder
-        print(f"[Reranker] Loading {model_name}...")
-        _cross_encoders[model_name] = CrossEncoder(model_name, max_length=512)
-    return _cross_encoders[model_name]
+    model = _cross_encoders.get(model_name)
+    if model is None:
+        with _cross_encoder_lock:
+            model = _cross_encoders.get(model_name)
+            if model is None:
+                from sentence_transformers import CrossEncoder
+                logger.info("reranker_loading model=%s", model_name)
+                model = CrossEncoder(model_name, max_length=512)
+                _cross_encoders[model_name] = model
+    return model
+
+
+def warm_reranker(model_name: str) -> None:
+    """Load the cross-encoder at startup so no request pays for it mid-flight."""
+    _get_cross_encoder(model_name)
 
 
 def _sigmoid(x: float) -> float:

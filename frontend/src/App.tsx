@@ -7,13 +7,27 @@ import { API_BASE_URL } from "@/lib/api";
 
 export default function App() {
   const { isAuthenticated } = useAuth();
-  const { isLoading, isError, error } = useConfig();
+  const { isLoading, isError, error, failureCount } = useConfig();
 
   if (isLoading) {
+    // A retry in flight means the backend is asleep rather than unreachable —
+    // Hugging Face Spaces need a minute or two to load their models on wake.
+    // Say that, instead of leaving the user staring at a generic spinner.
+    const waking = failureCount > 0;
     return (
-      <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 bg-zinc-950">
+      <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 bg-zinc-950 px-6 text-center">
         <Spinner className="h-6 w-6" />
-        <p className="text-sm text-muted">Connecting to the ResearchRAG API…</p>
+        <p className="text-sm text-muted">
+          {waking
+            ? "Waking the API — it loads its models on first use…"
+            : "Connecting to the ResearchRAG API…"}
+        </p>
+        {waking && (
+          <p className="max-w-sm text-xs text-subtle">
+            The server sleeps when idle. This usually takes under two minutes
+            {failureCount > 1 ? ` · attempt ${failureCount + 1}` : ""}.
+          </p>
+        )}
       </div>
     );
   }

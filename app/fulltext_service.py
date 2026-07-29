@@ -13,6 +13,9 @@ Returns the PDF bytes so the caller can pass them to `ingest_pdf`.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
+
 import httpx
 from dataclasses import dataclass
 from app.config import get_settings
@@ -88,31 +91,86 @@ def _unpaywall_pdf_url(doi: str) -> str | None:
     return None
 
 
+_MAX_REDIRECTS = 3
+
+
+def _assert_public_http_url(url: httpx.URL) -> None:
+    """
+    Reject anything that is not a public http(s) endpoint.
+
+    These URLs are attacker-steerable: a DOI resolves to whatever its owner
+    registered, and Unpaywall echoes third-party ``best_oa_location.url``. With
+    redirects followed blindly this was a *readable* SSRF — the response body is
+    ingested into the caller's knowledge base and can then be read straight back
+    out through /ask, so a redirect to a cloud metadata endpoint exfiltrated
+    instance credentials.
+    """
+    if url.scheme not in ("http", "https"):
+        raise ValueError(f"blocked scheme: {url.scheme!r}")
+    host = url.host
+    if not host:
+        raise ValueError("missing host")
+    # Resolve and check EVERY address the name maps to, so a name with one
+    # public and one private A record cannot slip through.
+    try:
+        infos = socket.getaddrinfo(host, url.port or (443 if url.scheme == "https" else 80))
+    except socket.gaierror as exc:
+        raise ValueError(f"unresolvable host: {host}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local      # 169.254.0.0/16 — cloud metadata
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError(f"blocked non-public address {ip} for host {host}")
+
+
 def _download_pdf(url: str) -> bytes | None:
     """Download a PDF from a URL. Returns bytes or None on failure."""
     cfg = get_settings()
     max_bytes = cfg.fulltext_max_pdf_mb * 1024 * 1024
     try:
+        # follow_redirects=False + a bounded manual loop: every hop is
+        # re-validated, which blind redirect-following could not do.
         with httpx.Client(
             timeout=60,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": "arxiv-rag/1.0"},
         ) as client:
-            with client.stream("GET", url) as resp:
-                if resp.status_code != 200:
-                    return None
-                content_type = resp.headers.get("content-type", "")
-                # Accept application/pdf or octet-stream (some hosts mis-label)
-                if "html" in content_type:
-                    return None  # got a webpage, not a PDF
-                chunks = []
-                total = 0
-                for chunk in resp.iter_bytes(chunk_size=65536):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        return None  # too large, abort
-                    chunks.append(chunk)
-                return b"".join(chunks)
+            current = httpx.URL(url)
+            for _ in range(_MAX_REDIRECTS + 1):
+                _assert_public_http_url(current)
+                with client.stream("GET", current) as resp:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
+                            return None
+                        current = current.join(location)
+                        continue
+                    if resp.status_code != 200:
+                        return None
+                    content_type = resp.headers.get("content-type", "").lower()
+                    # Allowlist rather than the old "reject html" denylist: a
+                    # metadata endpoint returns JSON or text/plain and sailed
+                    # straight through.
+                    if not any(
+                        t in content_type
+                        for t in ("application/pdf", "application/x-pdf", "octet-stream")
+                    ):
+                        return None
+                    chunks = []
+                    total = 0
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            return None  # too large, abort
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+            return None  # redirect budget exhausted
     except Exception:
         return None
 
