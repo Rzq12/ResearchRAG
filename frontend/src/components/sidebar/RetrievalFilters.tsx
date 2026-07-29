@@ -4,7 +4,6 @@ import { Funnel } from "@phosphor-icons/react";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Collapsible } from "@/components/ui/Collapsible";
-import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 import { useDocuments } from "@/hooks/useServerData";
 import type { WhereFilter } from "@/lib/types";
@@ -22,9 +21,8 @@ const SECTIONS = [
 
 /** Metadata filtering (document / section / year) → builds the Chroma where. */
 export function RetrievalFilters() {
-  const { session } = useAuth();
   const { setWhereFilter } = useSettings();
-  const { data } = useDocuments(session?.userId ?? null);
+  const { data } = useDocuments();
 
   const [doc, setDoc] = useState("All documents");
   const [section, setSection] = useState("All sections");
@@ -55,7 +53,7 @@ export function RetrievalFilters() {
     <Collapsible
       title={
         <span className="flex items-center gap-2">
-          <Funnel className="h-4 w-4 text-zinc-500" />
+          <Funnel className="h-4 w-4 text-muted" />
           Retrieval filters
           {activeCount > 0 && (
             <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent">

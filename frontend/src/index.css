@@ -169,9 +169,32 @@
     @apply font-mono tabular-nums;
   }
 
+  /*
+   * Skip link (WCAG 2.4.1): visually hidden until focused, so keyboard users
+   * can jump past the island nav and the sources rail straight to the thread.
+   */
+  .skip-link {
+    @apply sr-only;
+  }
+  .skip-link:focus {
+    @apply fixed left-4 top-4 z-[60] rounded-xl bg-accent px-4 py-2.5
+      text-sm font-medium text-zinc-950 shadow-lg outline-none ring-2 ring-white/70;
+    /* Undo sr-only's clipping explicitly. Using `not-sr-only` here would also
+       emit `position: static`, and which of the two position declarations wins
+       depends on Tailwind's utility ordering — too fragile for a control that
+       only keyboard users ever see. */
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: nowrap;
+  }
+
   /* Micro eyebrow label above section headings. */
   .eyebrow {
-    @apply text-[10px] uppercase tracking-[0.2em] text-zinc-500;
+    @apply text-[10px] uppercase tracking-[0.2em] text-muted;
   }
 
   /*
@@ -244,10 +267,10 @@
     text-wrap: pretty;
   }
   .prose-chat ul {
-    @apply my-2 list-disc space-y-1 pl-5 marker:text-zinc-600;
+    @apply my-2 list-disc space-y-1 pl-5 marker:text-subtle;
   }
   .prose-chat ol {
-    @apply my-2 list-decimal space-y-1 pl-5 marker:text-zinc-600;
+    @apply my-2 list-decimal space-y-1 pl-5 marker:text-subtle;
   }
   .prose-chat h1,
   .prose-chat h2,

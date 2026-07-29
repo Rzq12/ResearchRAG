@@ -10,7 +10,7 @@ export function Suggestions({ suggestions, onPick, disabled }: SuggestionsProps)
   if (!suggestions.length) return null;
   return (
     <div className="space-y-2.5">
-      <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-muted">
         <Lightbulb className="h-3.5 w-3.5 text-accent" /> Suggested questions
       </p>
       <div className="stagger-in flex flex-wrap gap-2">

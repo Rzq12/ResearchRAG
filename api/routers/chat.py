@@ -13,18 +13,18 @@ Event protocol (``text/event-stream``):
     event: done    data: {}                      # always last
 """
 
-from __future__ import annotations
-
 import json
 from collections.abc import Iterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.llm_client import friendly_llm_error
 from app.rag import ask_stream
 
+from api.rate_limit import limiter
 from api.schemas import ChatRequest
+from api.security import current_user
 from api.serialize import reference_to_dict
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -34,7 +34,7 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _event_stream(body: ChatRequest) -> Iterator[str]:
+def _event_stream(body: ChatRequest, user_id: str) -> Iterator[str]:
     history = [{"role": m.role, "content": m.content} for m in body.chat_history]
 
     try:
@@ -43,7 +43,7 @@ def _event_stream(body: ChatRequest) -> Iterator[str]:
             chat_history=history,
             api_key=body.api_key,
             model=body.model,
-            user_id=body.user_id,
+            user_id=user_id,
             where=body.where,
             kb_only=body.kb_only,
         )
@@ -83,10 +83,18 @@ def _event_stream(body: ChatRequest) -> Iterator[str]:
     yield _sse("done", {})
 
 
-@router.post("/stream")
-def chat_stream(body: ChatRequest) -> StreamingResponse:
+@router.post("/stream", response_class=StreamingResponse)
+@limiter.limit("20/minute")
+def chat_stream(
+    request: Request,
+    body: ChatRequest,
+    user_id: str = Depends(current_user),
+):
+    # No return annotation: this module uses postponed annotations and slowapi
+    # wraps the handler, so FastAPI cannot resolve `StreamingResponse` from the
+    # wrapper's globals. `response_class` conveys the same thing to OpenAPI.
     return StreamingResponse(
-        _event_stream(body),
+        _event_stream(body, user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

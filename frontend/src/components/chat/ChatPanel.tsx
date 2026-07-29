@@ -4,7 +4,6 @@ import { DownloadSimple, Eraser, Flask } from "@phosphor-icons/react";
 import { ChatInput } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
 import { Suggestions } from "./Suggestions";
-import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
@@ -13,12 +12,10 @@ import { streamChat } from "@/lib/chatStream";
 import type { ChatMessage } from "@/lib/types";
 
 export function ChatPanel() {
-  const { session } = useAuth();
   const { selectedModel, activeApiKey, whereFilter, kbOnly } = useSettings();
   const toast = useToast();
   const { suggestions, pendingQuery, setPendingQuery } = useWorkspace();
-  const userId = session?.userId ?? null;
-  const { data: stats } = useKbStats(userId);
+  const { data: stats } = useKbStats();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -80,7 +77,6 @@ export function ChatPanel() {
           chatHistory: history,
           apiKey: activeApiKey,
           model: selectedModel,
-          userId,
           where: whereFilter,
           kbOnly,
           signal: controller.signal,
@@ -101,7 +97,7 @@ export function ChatPanel() {
         },
       );
     },
-    [streaming, activeApiKey, stats, messages, selectedModel, userId, whereFilter, kbOnly, appendToLast, patchLast, toast],
+    [streaming, activeApiKey, stats, messages, selectedModel, whereFilter, kbOnly, appendToLast, patchLast, toast],
   );
 
   useEffect(() => {
@@ -155,7 +151,7 @@ export function ChatPanel() {
           <h1 className="text-[26px] font-medium tracking-[-0.035em] text-white">
             Research assistant
           </h1>
-          <p className="mt-1.5 truncate text-[13px] text-zinc-500">
+          <p className="mt-1.5 truncate text-[13px] text-muted">
             {stats
               ? `${stats.total_chunks.toLocaleString()} chunks · answers cite their source passage`
               : "Answers cite their source passage"}
@@ -179,7 +175,7 @@ export function ChatPanel() {
             disabled={!messages.length}
             title="Clear thread"
             aria-label="Clear thread"
-            className="flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-[12.5px] text-zinc-500 transition-all duration-[400ms] ease-smooth hover:text-red-300 active:scale-[0.98] disabled:opacity-40 disabled:hover:text-zinc-500"
+            className="flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-[12.5px] text-muted transition-all duration-[400ms] ease-smooth hover:text-red-300 active:scale-[0.98] disabled:opacity-40 disabled:hover:text-muted"
           >
             <Eraser className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Clear</span>
@@ -208,9 +204,9 @@ export function ChatPanel() {
 
       <div className="shrink-0 px-2">
         <ChatInput onSend={send} onStop={stop} streaming={streaming} />
-        <div className="flex items-center gap-3 px-3 pb-2 text-[11.5px] text-zinc-600">
+        <div className="flex items-center gap-3 px-3 pb-2 text-[11.5px] text-subtle">
           <span className="truncate">{selectedModel}</span>
-          <span className="text-zinc-700">·</span>
+          <span className="text-muted">·</span>
           <span className="whitespace-nowrap">
             {kbOnly ? "grounded in library only" : "web fallback enabled"}
           </span>
@@ -230,7 +226,7 @@ function EmptyState() {
         <p className="text-[17px] font-medium tracking-tight text-zinc-100">
           Ask your library a question
         </p>
-        <p className="mx-auto mt-2 max-w-[42ch] text-[13.5px] leading-relaxed text-zinc-500">
+        <p className="mx-auto mt-2 max-w-[42ch] text-[13.5px] leading-relaxed text-muted">
           Pull papers from OpenAlex or drop a PDF into the rail, then ask. Answers stream in with the
           passage they came from attached.
         </p>

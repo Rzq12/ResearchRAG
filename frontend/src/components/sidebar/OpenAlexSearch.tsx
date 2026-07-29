@@ -33,7 +33,7 @@ export function OpenAlexSearch() {
   const qc = useQueryClient();
   const { setSuggestions } = useWorkspace();
 
-  const userId = session?.userId ?? null;
+  const scope = session?.userId ?? "anonymous";
 
   const [query, setQuery] = useState("");
   const [count, setCount] = useState(5);
@@ -57,9 +57,9 @@ export function OpenAlexSearch() {
       }
       setResults(works);
 
-      const ingest = await ingestOpenAlex(works, mode, userId);
-      qc.invalidateQueries({ queryKey: ["documents", userId] });
-      qc.invalidateQueries({ queryKey: ["kb-stats", userId] });
+      const ingest = await ingestOpenAlex(works, mode);
+      qc.invalidateQueries({ queryKey: ["documents", scope] });
+      qc.invalidateQueries({ queryKey: ["kb-stats", scope] });
 
       if (ingest.abstracts_ingested) {
         toast.success(`${ingest.abstracts_ingested} abstracts ingested.`);
@@ -191,7 +191,7 @@ export function OpenAlexSearch() {
                       {topics[w.openalex_id]}
                     </Badge>
                   )}
-                  <p className="mt-0.5 text-zinc-500">
+                  <p className="mt-0.5 text-muted">
                     {w.authors.slice(0, 2).join(", ")} · {w.published}
                     {w.citation_count ? ` · ${w.citation_count} citations` : ""}
                   </p>

@@ -6,12 +6,42 @@
 # ${NGINX_PORT} is substituted at container start from $PORT (Railway) or the
 # HF app_port default (8501). See deploy/start.sh.
 
+# NOTE: this file is included inside nginx's http{} block (conf.d/*.conf), so
+# only http-context directives belong here. The pid path is handled in the
+# Dockerfile by making /var/run/nginx.pid writable by appuser.
+
+# ── Compression ──────────────────────────────────────────────────────────────
+gzip              on;
+gzip_vary         on;
+gzip_min_length   1024;
+gzip_proxied      any;
+gzip_comp_level   5;
+gzip_types        text/plain text/css application/json application/javascript
+                  text/xml application/xml application/xml+rss text/javascript
+                  image/svg+xml;
+
 server {
     listen ${NGINX_PORT};
     server_name _;
 
-    # Large PDF uploads go through /api/documents/upload.
+    # Large PDF uploads go through /api/documents/upload. Keep this at or above
+    # MAX_UPLOAD_MB so the app returns a clean 413/422 instead of nginx cutting
+    # the connection.
     client_max_body_size 40m;
+
+    # Don't advertise the exact nginx version to attackers.
+    server_tokens off;
+
+    # ── Security headers (applied to every response, including errors) ───────
+    # HSTS: the platform terminates TLS in front of us; this tells browsers to
+    # never try plain HTTP again.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # This origin serves Streamlit, which must never be framed (clickjacking).
+    add_header X-Frame-Options            "DENY"            always;
+    add_header X-Content-Type-Options     "nosniff"         always;
+    add_header Referrer-Policy            "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy         "camera=(), microphone=(), geolocation=(), payment=()" always;
+    add_header Cross-Origin-Opener-Policy "same-origin"     always;
 
     # ── FastAPI (React frontend talks to these) ──────────────────────────────
     location /api/ {

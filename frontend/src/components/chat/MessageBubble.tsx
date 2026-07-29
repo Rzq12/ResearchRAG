@@ -77,7 +77,7 @@ export function MessageBubble({ message, streaming }: { message: ChatMessage; st
           <Collapsible
             title={
               <span className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-zinc-500" /> Reasoning
+                <Brain className="h-4 w-4 text-muted" /> Reasoning
               </span>
             }
             className="w-full"

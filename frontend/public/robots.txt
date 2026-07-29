@@ -1,0 +1,8 @@
+# ResearchRAG
+# The app itself is behind authentication, so only the landing view is useful
+# to crawlers. API routes are on a different origin and are not linked here.
+User-agent: *
+Allow: /$
+Disallow: /api/
+
+Sitemap: https://research-rag.vercel.app/sitemap.xml

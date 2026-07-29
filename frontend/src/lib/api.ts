@@ -1,9 +1,19 @@
 // Typed fetch client for the ResearchRAG FastAPI backend.
 // Every function targets an endpoint defined in api/routers/*.py.
+//
+// Identity is carried by the bearer token only — no call passes a user_id, and
+// the server would ignore it if one did. See api/security.py.
 
+import {
+  clearSession,
+  getSession,
+  isAccessTokenStale,
+  refreshSession,
+  sessionFromTokenResponse,
+  setSession,
+} from "./authStore";
 import type {
   AppConfig,
-  AuthResult,
   DocumentInfo,
   IngestMode,
   IngestResult,
@@ -11,28 +21,81 @@ import type {
   OpenAlexWork,
   PdfIngestResult,
   SemanticHit,
+  Session,
   WhereFilter,
 } from "./types";
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000";
+const RAW_BASE = import.meta.env.VITE_API_BASE_URL;
+
+if (!RAW_BASE && import.meta.env.PROD) {
+  // Belt-and-braces: vite.config.ts already fails the build without this var,
+  // so reaching here means someone bypassed the build guard.
+  throw new Error("VITE_API_BASE_URL is not configured for this production build.");
+}
+
+export const API_BASE_URL = (RAW_BASE || "http://localhost:8000").replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Correlation id from the server; quote it in bug reports. */
+  requestId?: string;
+  constructor(message: string, status: number, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Pull the message out of the API's error envelope. */
+async function toApiError(res: Response): Promise<ApiError> {
+  let message = `Request failed (${res.status})`;
+  let requestId: string | undefined = res.headers.get("X-Request-ID") ?? undefined;
+  try {
+    const body = await res.json();
+    message = body?.message || body?.detail || message;
+    requestId = body?.request_id ?? requestId;
+    if (Array.isArray(body?.fields) && body.fields.length) {
+      message += `: ${body.fields.map((f: { message: string }) => f.message).join(", ")}`;
+    }
+  } catch {
+    /* non-JSON body */
+  }
+  return new ApiError(message, res.status, requestId);
+}
+
+interface RequestOptions extends RequestInit {
+  /** Skip auth entirely (login/register/refresh/config). */
+  anonymous?: boolean;
+}
+
+async function rawFetch(path: string, init: RequestOptions, token?: string): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+}
+
+/**
+ * Core request wrapper: attaches the bearer token, refreshes proactively when
+ * the access token is about to expire, and retries exactly once after a 401.
+ * A failed refresh clears the session, which flips the app back to the login
+ * screen through the auth store subscription.
+ */
+async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
+  let token: string | undefined;
+
+  if (!init.anonymous) {
+    let session = getSession();
+    if (session && isAccessTokenStale(session)) {
+      session = await refreshSession(API_BASE_URL);
+    }
+    token = session?.accessToken;
+  }
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-      ...init,
-    });
+    res = await rawFetch(path, init, token);
   } catch {
     throw new ApiError(
       `Cannot reach the API at ${API_BASE_URL}. Is the backend running?`,
@@ -40,35 +103,73 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  if (!res.ok) {
-    let detail = `Request failed (${res.status})`;
-    try {
-      const body = await res.json();
-      detail = body?.detail || body?.message || detail;
-    } catch {
-      /* non-JSON error body */
+  // Reactive refresh: the token expired between check and call, or was revoked.
+  if (res.status === 401 && !init.anonymous && getSession()) {
+    const refreshed = await refreshSession(API_BASE_URL);
+    if (refreshed) {
+      try {
+        res = await rawFetch(path, init, refreshed.accessToken);
+      } catch {
+        throw new ApiError(`Cannot reach the API at ${API_BASE_URL}.`, 0);
+      }
+    } else {
+      clearSession();
+      throw new ApiError("Your session has expired. Please sign in again.", 401);
     }
-    throw new ApiError(detail, res.status);
   }
 
+  if (!res.ok) throw await toApiError(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-function jsonBody(data: unknown): RequestInit {
+function jsonBody(data: unknown): RequestOptions {
   return { method: "POST", body: JSON.stringify(data) };
 }
 
-// ─── Meta ──────────────────────────────────────────────────────────────────
-export const getConfig = () => request<AppConfig>("/api/config");
-export const getHealth = () => request<{ status: string }>("/api/health");
+// ─── Meta (public) ───────────────────────────────────────────────────────────
+export const getConfig = () => request<AppConfig>("/api/config", { anonymous: true });
+export const getHealth = () => request<{ status: string }>("/api/health", { anonymous: true });
 
-// ─── Auth ──────────────────────────────────────────────────────────────────
+// ─── Auth ────────────────────────────────────────────────────────────────────
+interface TokenPayload {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  user_id: string;
+  display_name?: string;
+}
+
 export const register = (username: string, display_name: string, password: string) =>
-  request<AuthResult>("/api/auth/register", jsonBody({ username, display_name, password }));
+  request<{ success: boolean; message: string }>("/api/auth/register", {
+    ...jsonBody({ username, display_name, password }),
+    anonymous: true,
+  });
 
-export const login = (username: string, password: string) =>
-  request<AuthResult>("/api/auth/login", jsonBody({ username, password }));
+export async function login(username: string, password: string): Promise<Session> {
+  const data = await request<TokenPayload>("/api/auth/login", {
+    ...jsonBody({ username, password }),
+    anonymous: true,
+  });
+  const session = sessionFromTokenResponse(data);
+  setSession(session);
+  return session;
+}
+
+export async function logout(): Promise<void> {
+  const session = getSession();
+  if (session?.refreshToken) {
+    try {
+      await request<void>("/api/auth/logout", {
+        ...jsonBody({ refresh_token: session.refreshToken }),
+        anonymous: true,
+      });
+    } catch {
+      // Server-side revocation is best-effort; always clear locally.
+    }
+  }
+  clearSession();
+}
 
 // ─── OpenAlex ────────────────────────────────────────────────────────────────
 export const searchOpenAlex = (query: string, max_results: number, api_key?: string) =>
@@ -77,8 +178,8 @@ export const searchOpenAlex = (query: string, max_results: number, api_key?: str
     jsonBody({ query, max_results, api_key: api_key || null }),
   );
 
-export const ingestOpenAlex = (works: OpenAlexWork[], mode: IngestMode, user_id: string | null) =>
-  request<IngestResult>("/api/openalex/ingest", jsonBody({ works, mode, user_id }));
+export const ingestOpenAlex = (works: OpenAlexWork[], mode: IngestMode) =>
+  request<IngestResult>("/api/openalex/ingest", jsonBody({ works, mode }));
 
 export const fetchCitations = (openalex_id: string, api_key?: string) =>
   request<{ references: Record<string, string> }>(
@@ -111,61 +212,35 @@ export const getSuggestions = (params: {
   );
 
 // ─── Documents / KB ──────────────────────────────────────────────────────────
-export const listDocuments = (user_id: string | null) =>
-  request<{ documents: DocumentInfo[] }>(
-    `/api/documents${user_id ? `?user_id=${encodeURIComponent(user_id)}` : ""}`,
-  );
+export const listDocuments = () => request<{ documents: DocumentInfo[] }>("/api/documents");
 
-export const getKbStats = (user_id: string | null) =>
-  request<KbStats>(
-    `/api/documents/stats${user_id ? `?user_id=${encodeURIComponent(user_id)}` : ""}`,
-  );
+export const getKbStats = () => request<KbStats>("/api/documents/stats");
 
-export async function uploadPdf(file: File, user_id: string | null): Promise<PdfIngestResult> {
+export async function uploadPdf(file: File): Promise<PdfIngestResult> {
   const form = new FormData();
   form.append("file", file);
-  if (user_id) form.append("user_id", user_id);
-  // Note: do NOT set Content-Type — the browser sets the multipart boundary.
-  const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    let detail = `Upload failed (${res.status})`;
-    try {
-      detail = (await res.json())?.detail || detail;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(detail, res.status);
-  }
-  return (await res.json()) as PdfIngestResult;
+  // Content-Type is intentionally unset so the browser adds the multipart boundary.
+  return request<PdfIngestResult>("/api/documents/upload", { method: "POST", body: form });
 }
 
-export const summarizeDocument = (
-  title: string,
-  user_id: string | null,
-  api_key: string,
-  model?: string,
-) =>
+export const summarizeDocument = (title: string, api_key: string, model?: string) =>
   request<{ summary: string }>(
     "/api/documents/summarize",
-    jsonBody({ title, user_id, api_key, model: model || null }),
+    jsonBody({ title, api_key, model: model || null }),
   );
 
-export const deleteDocument = (title: string, user_id: string | null) =>
+export const deleteDocument = (title: string) =>
   request<{ deleted: number }>("/api/documents", {
     method: "DELETE",
-    body: JSON.stringify({ title, user_id }),
+    body: JSON.stringify({ title }),
   });
 
-export const clearKnowledgeBase = (user_id: string | null) =>
-  request<{ cleared: number }>("/api/documents/clear", jsonBody({ user_id }));
+export const clearKnowledgeBase = () =>
+  request<{ cleared: number }>("/api/documents/clear", jsonBody({}));
 
-// ─── Semantic search ──────────────────────────────────────────────────────────
+// ─── Semantic search ─────────────────────────────────────────────────────────
 export const semanticSearch = (params: {
   query: string;
-  user_id: string | null;
   top_k: number;
   content_type_filter?: string | null;
   min_score: number;
@@ -174,7 +249,6 @@ export const semanticSearch = (params: {
     "/api/semantic-search",
     jsonBody({
       query: params.query,
-      user_id: params.user_id,
       top_k: params.top_k,
       content_type_filter: params.content_type_filter || null,
       min_score: params.min_score,

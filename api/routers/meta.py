@@ -6,7 +6,7 @@ Exposes the same model list the Streamlit sidebar builds from
 self-hosted ``hf:`` model when it is configured in the environment.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 
 from app.config import get_settings
 from app.llm_client import MODEL_CATALOG, PROVIDER_HINTS, get_provider
@@ -19,7 +19,44 @@ router = APIRouter(tags=["meta"])
 
 @router.get("/api/health")
 def health() -> dict[str, str]:
+    """Liveness — process is up. Cheap enough for a container HEALTHCHECK."""
     return {"status": "ok"}
+
+
+@router.get("/api/ready")
+def ready() -> dict[str, object]:
+    """
+    Readiness — dependencies actually answer.
+
+    Distinct from liveness: the process can be alive while ChromaDB or the
+    embedding model is not yet usable, and an orchestrator should not send
+    traffic during that window.
+    """
+    checks: dict[str, bool] = {}
+    try:
+        from app.database import get_collection
+
+        get_collection(None).count()
+        checks["vector_store"] = True
+    except Exception:
+        checks["vector_store"] = False
+
+    try:
+        from app.auth import _conn
+
+        with _conn() as db:
+            db.execute("SELECT 1").fetchone()
+        checks["database"] = True
+    except Exception:
+        checks["database"] = False
+
+    ok = all(checks.values())
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Not ready: {checks}",
+        )
+    return {"status": "ready", "checks": checks}
 
 
 @router.get("/api/config", response_model=ConfigResponse)

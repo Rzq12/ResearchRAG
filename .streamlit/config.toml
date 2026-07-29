@@ -1,8 +1,14 @@
 [server]
 headless = true
 port = 8501
+# XSRF protection stays ON. The Streamlit app is publicly reachable (directly,
+# or through nginx in the combined container), so disabling it would leave the
+# form/upload endpoints open to cross-site request forgery.
+enableXsrfProtection = true
+# CORS off: Streamlit is only ever consumed same-origin. The React frontend
+# talks to the FastAPI wrapper at /api/*, which has its own explicit allowlist
+# (see api/settings.py).
 enableCORS = false
-enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false

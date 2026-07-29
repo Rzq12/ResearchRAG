@@ -48,7 +48,7 @@ export function ChatInput({ onSend, onStop, streaming, disabled }: ChatInputProp
             }}
             onKeyDown={onKeyDown}
             placeholder="Ask about your papers…"
-            className="scrollbar-none max-h-[148px] min-w-0 flex-1 resize-none bg-transparent py-3 text-[15px] leading-[22px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none disabled:opacity-50"
+            className="scrollbar-none max-h-[148px] min-w-0 flex-1 resize-none bg-transparent py-3 text-[15px] leading-[22px] text-zinc-100 placeholder:text-subtle focus:outline-none disabled:opacity-50"
           />
 
           {streaming ? (

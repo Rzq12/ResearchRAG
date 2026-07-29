@@ -23,7 +23,7 @@ export function Toggle({ checked, onChange, label, hint, icon }: ToggleProps) {
       {icon && <span className="mt-0.5 shrink-0 text-zinc-400">{icon}</span>}
       <span className="min-w-0 flex-1">
         <span className="block text-[13px] font-medium text-zinc-200">{label}</span>
-        {hint && <span className="mt-0.5 block text-[11px] leading-snug text-zinc-500">{hint}</span>}
+        {hint && <span className="mt-0.5 block text-[11px] leading-snug text-muted">{hint}</span>}
       </span>
       <span
         className={cn(

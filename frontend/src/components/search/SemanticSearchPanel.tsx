@@ -1,7 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { ArrowRight, MagnifyingGlass, Sparkle } from "@phosphor-icons/react";
 
-import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { useKbStats } from "@/hooks/useServerData";
 import { semanticSearch } from "@/lib/api";
@@ -17,10 +16,8 @@ const EXAMPLES = [
 ];
 
 export function SemanticSearchPanel() {
-  const { session } = useAuth();
   const toast = useToast();
-  const userId = session?.userId ?? null;
-  const { data: stats } = useKbStats(userId);
+  const { data: stats } = useKbStats();
 
   const [query, setQuery] = useState("");
   const [topK, setTopK] = useState(15);
@@ -40,7 +37,6 @@ export function SemanticSearchPanel() {
     try {
       const res = await semanticSearch({
         query: text,
-        user_id: userId,
         top_k: topK,
         content_type_filter: ctype === "All" ? null : ctype,
         min_score: minScore,
@@ -63,12 +59,12 @@ export function SemanticSearchPanel() {
           <h1 className="text-[26px] font-medium tracking-[-0.035em] text-white">
             Semantic search
           </h1>
-          <p className="mt-1.5 truncate text-[13px] text-zinc-500">
+          <p className="mt-1.5 truncate text-[13px] text-muted">
             Raw chunks with similarity scores — no model in the loop.
           </p>
         </div>
         {stats && (
-          <span className="num shrink-0 whitespace-nowrap text-[12.5px] text-zinc-600">
+          <span className="num shrink-0 whitespace-nowrap text-[12.5px] text-subtle">
             {stats.total_chunks.toLocaleString()} chunks indexed
           </span>
         )}
@@ -79,7 +75,7 @@ export function SemanticSearchPanel() {
           <div className="bezel">
             <div className="bezel-core px-6 py-10 text-center">
               <p className="text-[15px] text-zinc-200">Nothing indexed yet</p>
-              <p className="mx-auto mt-2 max-w-[40ch] text-[13.5px] leading-relaxed text-zinc-500">
+              <p className="mx-auto mt-2 max-w-[40ch] text-[13.5px] leading-relaxed text-muted">
                 Ingest papers from OpenAlex or drop a PDF into the rail, then search across every
                 chunk.
               </p>
@@ -96,7 +92,7 @@ export function SemanticSearchPanel() {
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && run()}
                     placeholder="Search every chunk…"
-                    className="min-w-0 flex-1 bg-transparent py-3 text-[15px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                    className="min-w-0 flex-1 bg-transparent py-3 text-[15px] text-zinc-100 placeholder:text-subtle focus:outline-none"
                   />
                   <button
                     onClick={() => run()}
@@ -138,7 +134,7 @@ export function SemanticSearchPanel() {
                       key={t}
                       onClick={() => setCtype(t)}
                       className={cn(
-                        "rounded-full border border-white/[0.07] px-3 py-1.5 text-[12px] text-zinc-500 transition-all duration-[400ms] ease-smooth hover:text-zinc-200 active:scale-[0.97]",
+                        "rounded-full border border-white/[0.07] px-3 py-1.5 text-[12px] text-muted transition-all duration-[400ms] ease-smooth hover:text-zinc-200 active:scale-[0.97]",
                         ctype === t && "border-accent/30 bg-accent/[0.12] text-accent-soft",
                         t !== "All" && "font-mono",
                       )}
@@ -155,7 +151,7 @@ export function SemanticSearchPanel() {
             {!loading && results && results.length > 0 && (
               <div className="mt-8">
                 <div className="mb-4 flex items-baseline justify-between gap-4 px-1">
-                  <p className="min-w-0 truncate text-[13px] text-zinc-500">
+                  <p className="min-w-0 truncate text-[13px] text-muted">
                     matches for <span className="text-zinc-300">“{ranQuery}”</span>
                   </p>
                   <span className="num shrink-0 text-[13px] text-zinc-400">
@@ -176,7 +172,7 @@ export function SemanticSearchPanel() {
                 <p className="text-[14.5px] text-zinc-300">
                   No chunk cleared the {minScore.toFixed(2)} score threshold
                 </p>
-                <p className="mt-2 text-[13px] text-zinc-500">
+                <p className="mt-2 text-[13px] text-muted">
                   Lower the minimum score, widen the type filter, or rephrase the query.
                 </p>
               </div>
@@ -184,7 +180,7 @@ export function SemanticSearchPanel() {
 
             {!loading && !results && (
               <div className="mt-10 px-1">
-                <div className="flex items-center gap-2 text-zinc-600">
+                <div className="flex items-center gap-2 text-subtle">
                   <Sparkle className="h-3.5 w-3.5" />
                   <span className="eyebrow">Try</span>
                 </div>
@@ -201,7 +197,7 @@ export function SemanticSearchPanel() {
                         <span className="text-[14.5px] text-zinc-400 transition-colors duration-[400ms] ease-smooth group-hover:text-zinc-100">
                           {ex}
                         </span>
-                        <MagnifyingGlass className="h-3.5 w-3.5 shrink-0 text-zinc-700 transition-all duration-[400ms] ease-smooth group-hover:translate-x-0.5 group-hover:text-accent" />
+                        <MagnifyingGlass className="h-3.5 w-3.5 shrink-0 text-muted transition-all duration-[400ms] ease-smooth group-hover:translate-x-0.5 group-hover:text-accent" />
                       </button>
                     </li>
                   ))}
@@ -279,12 +275,12 @@ function ResultCard({ hit, index }: { hit: SemanticHit; index: number }) {
     <article className="group rounded-[18px] border border-white/[0.06] bg-white/[0.02] p-4 transition-all duration-[450ms] ease-smooth hover:-translate-y-px hover:border-white/[0.1] hover:bg-white/[0.035]">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-baseline gap-3">
-          <span className="num shrink-0 text-[11px] text-zinc-600">
+          <span className="num shrink-0 text-[11px] text-subtle">
             {String(index).padStart(2, "0")}
           </span>
           <div className="min-w-0">
             <p className="truncate text-[13.5px] text-zinc-200">{truncate(hit.title, 60)}</p>
-            <p className="mt-1 flex items-center gap-2 text-[11.5px] text-zinc-600">
+            <p className="mt-1 flex items-center gap-2 text-[11.5px] text-subtle">
               <span className="num text-accent-soft/80">{hit.content_type}</span>
               {page && <span className="num">{page}</span>}
               {section && <span className="truncate">{section}</span>}

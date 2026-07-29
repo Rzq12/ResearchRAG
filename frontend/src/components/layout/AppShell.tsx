@@ -21,6 +21,11 @@ export function AppShell({ nav, children }: { nav?: ReactNode; children: ReactNo
 
   return (
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-zinc-950">
+      {/* First tab stop: lets keyboard users bypass the nav and the rail. */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
       {/* Ambient wash — single accent hue, no purple. */}
       <div className="pointer-events-none fixed inset-0 z-0" aria-hidden>
         <div className="absolute left-[8%] top-[-14%] h-[520px] w-[720px] rounded-full bg-accent/[0.07] blur-[140px]" />
@@ -90,7 +95,9 @@ export function AppShell({ nav, children }: { nav?: ReactNode; children: ReactNo
           railOpen && "lg:grid-cols-[minmax(0,1fr)_clamp(288px,26vw,352px)]",
         )}
       >
-        <main className="min-h-0 min-w-0">{children}</main>
+        <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 focus:outline-none">
+          {children}
+        </main>
         <aside
           className={cn(
             "hidden min-h-0 overflow-y-auto scrollbar-thin pb-2",

@@ -21,9 +21,10 @@ export interface AppConfig {
 export interface AuthResult {
   success: boolean;
   message: string;
-  display_name?: string;
-  user_id?: string;
 }
+
+/** Re-exported so components can type a session without reaching into authStore. */
+export type { Session } from "./authStore";
 
 export interface OpenAlexWork {
   openalex_id: string;

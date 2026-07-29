@@ -1,12 +1,23 @@
 """
-Lightweight authentication module using SQLite + salted SHA-256.
+Lightweight authentication module using SQLite.
+
+Passwords are hashed with PBKDF2-HMAC-SHA256 (see app/security.py). Accounts
+created under the previous salted single-round SHA-256 scheme keep working and
+are re-hashed transparently the next time their owner logs in, so no user is
+ever locked out by the migration.
+
 No external dependencies beyond the standard library.
 """
 
-import hashlib
-import secrets
 import sqlite3
 from pathlib import Path
+
+from app.security import (
+    hash_password,
+    needs_rehash,
+    validate_password,
+    verify_password,
+)
 
 _DB_PATH = Path("./data/users.db")
 
@@ -35,10 +46,6 @@ def init_auth_db() -> None:
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _hash(password: str, salt: str) -> str:
-    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
-
-
 def _normalize(username: str) -> str:
     return username.strip().lower()
 
@@ -57,17 +64,19 @@ def register_user(username: str, display_name: str, password: str) -> tuple[bool
         return False, "Username minimal 3 karakter."
     if not username.isalnum() and "_" not in username:
         return False, "Username hanya boleh huruf, angka, dan underscore."
-    if len(password) < 6:
-        return False, "Password minimal 6 karakter."
 
-    salt = secrets.token_hex(16)
-    pw_hash = _hash(password, salt)
+    # Policy applies to new passwords only — existing accounts are untouched.
+    ok, message = validate_password(password)
+    if not ok:
+        return False, message
+
+    pw_hash = hash_password(password)
 
     try:
         with _conn() as db:
             db.execute(
                 "INSERT INTO users (username, display_name, password_hash, salt) VALUES (?, ?, ?, ?)",
-                (username, display_name, pw_hash, salt),
+                (username, display_name, pw_hash, ""),
             )
             db.commit()
         return True, "Akun berhasil dibuat! Silakan login."
@@ -92,9 +101,49 @@ def login_user(username: str, password: str) -> tuple[bool, str, str]:
         return False, "Username atau password salah.", ""
 
     pw_hash, salt, display_name = row
-    if _hash(password, salt) == pw_hash:
-        return True, f"Selamat datang, {display_name}!", display_name
-    return False, "Username atau password salah.", ""
+    if not verify_password(password, pw_hash, salt or ""):
+        return False, "Username atau password salah.", ""
+
+    # Transparent migration: a legacy SHA-256 row is upgraded to PBKDF2 the
+    # first time its owner successfully authenticates. Never blocks the login.
+    if needs_rehash(pw_hash):
+        try:
+            with _conn() as db:
+                db.execute(
+                    "UPDATE users SET password_hash = ?, salt = '' WHERE username = ?",
+                    (hash_password(password), username),
+                )
+                db.commit()
+        except sqlite3.Error:
+            pass  # upgrade is best-effort; the user is already authenticated
+
+    return True, f"Selamat datang, {display_name}!", display_name
+
+
+def change_password(username: str, current_password: str, new_password: str) -> tuple[bool, str]:
+    """
+    Change a user's password after verifying the current one.
+
+    Returns (success, message). Callers should revoke the user's refresh tokens
+    on success (see app.sessions.revoke_all_for_user).
+    """
+    username = _normalize(username)
+
+    ok, _, _ = login_user(username, current_password)
+    if not ok:
+        return False, "Password saat ini salah."
+
+    valid, message = validate_password(new_password)
+    if not valid:
+        return False, message
+
+    with _conn() as db:
+        db.execute(
+            "UPDATE users SET password_hash = ?, salt = '' WHERE username = ?",
+            (hash_password(new_password), username),
+        )
+        db.commit()
+    return True, "Password berhasil diubah."
 
 
 def user_exists(username: str) -> bool:

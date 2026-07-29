@@ -46,7 +46,7 @@ export function SidebarContent({ showIdentity = false, nav, onNavigate }: Sideba
               <div className="truncate text-sm font-medium text-zinc-100">
                 {session?.displayName}
               </div>
-              <div className="truncate text-[11px] text-zinc-500">@{session?.userId}</div>
+              <div className="truncate text-[11px] text-muted">@{session?.userId}</div>
             </div>
             <Button variant="ghost" size="icon" onClick={logout} title="Sign out">
               <SignOut className="h-4 w-4" />

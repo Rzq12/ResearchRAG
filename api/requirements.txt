@@ -4,3 +4,8 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.18
+# Auth: JWT access tokens. Password hashing uses the stdlib (app/security.py),
+# so no native crypto build step is required.
+PyJWT==2.10.1
+# Rate limiting (per-user when authenticated, per-IP otherwise).
+slowapi==0.1.9

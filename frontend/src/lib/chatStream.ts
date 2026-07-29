@@ -5,6 +5,7 @@
 // fetch()'s ReadableStream and parse SSE frames ("event:"/"data:" blocks).
 
 import { API_BASE_URL } from "./api";
+import { clearSession, getSession, isAccessTokenStale, refreshSession } from "./authStore";
 import type { ChatMessage, ChatSource, Reference, WhereFilter } from "./types";
 
 export interface ChatStreamMeta {
@@ -27,7 +28,6 @@ export interface ChatStreamParams {
   chatHistory: Pick<ChatMessage, "role" | "content">[];
   apiKey: string;
   model: string;
-  userId: string | null;
   where: WhereFilter;
   kbOnly: boolean;
   signal?: AbortSignal;
@@ -37,30 +37,67 @@ export async function streamChat(
   params: ChatStreamParams,
   handlers: ChatStreamHandlers,
 ): Promise<void> {
+  const payload = JSON.stringify({
+    query: params.query,
+    chat_history: params.chatHistory,
+    api_key: params.apiKey,
+    model: params.model,
+    where: params.where,
+    kb_only: params.kbOnly,
+  });
+
+  // Refresh proactively — a stream that 401s mid-flight cannot be replayed
+  // cleanly, so it is much better to renew before opening it.
+  let session = getSession();
+  if (session && isAccessTokenStale(session)) {
+    session = await refreshSession(API_BASE_URL);
+  }
+
+  const open = (token?: string) =>
+    fetch(`${API_BASE_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: params.signal,
+      body: payload,
+    });
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/api/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: params.signal,
-      body: JSON.stringify({
-        query: params.query,
-        chat_history: params.chatHistory,
-        api_key: params.apiKey,
-        model: params.model,
-        user_id: params.userId,
-        where: params.where,
-        kb_only: params.kbOnly,
-      }),
-    });
+    res = await open(session?.accessToken);
+    if (res.status === 401 && getSession()) {
+      const refreshed = await refreshSession(API_BASE_URL);
+      if (refreshed) {
+        res = await open(refreshed.accessToken);
+      } else {
+        clearSession();
+        handlers.onError("Your session has expired. Please sign in again.");
+        handlers.onDone();
+        return;
+      }
+    }
   } catch {
     handlers.onError(`Cannot reach the API at ${API_BASE_URL}. Is the backend running?`);
     handlers.onDone();
     return;
   }
 
+  if (res.status === 429) {
+    handlers.onError("You're sending messages too quickly. Please wait a moment and retry.");
+    handlers.onDone();
+    return;
+  }
+
   if (!res.ok || !res.body) {
-    handlers.onError(`Chat request failed (${res.status}).`);
+    let detail = `Chat request failed (${res.status}).`;
+    try {
+      detail = (await res.json())?.message || detail;
+    } catch {
+      /* non-JSON body */
+    }
+    handlers.onError(detail);
     handlers.onDone();
     return;
   }

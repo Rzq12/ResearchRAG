@@ -21,17 +21,17 @@ export function KnowledgeBase() {
   const toast = useToast();
   const qc = useQueryClient();
   const { setSuggestions } = useWorkspace();
-  const userId = session?.userId ?? null;
+  const scope = session?.userId ?? "anonymous";
 
-  const { data: stats } = useKbStats(userId);
-  const { data: docs } = useDocuments(userId);
+  const { data: stats } = useKbStats();
+  const { data: docs } = useDocuments();
 
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [busyTitle, setBusyTitle] = useState<string | null>(null);
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["documents", userId] });
-    qc.invalidateQueries({ queryKey: ["kb-stats", userId] });
+    qc.invalidateQueries({ queryKey: ["documents", scope] });
+    qc.invalidateQueries({ queryKey: ["kb-stats", scope] });
   };
 
   const summarize = async (title: string) => {
@@ -41,7 +41,7 @@ export function KnowledgeBase() {
     }
     setBusyTitle(title);
     try {
-      const res = await summarizeDocument(title, userId, activeApiKey, selectedModel);
+      const res = await summarizeDocument(title, activeApiKey, selectedModel);
       setSummaries((prev) => ({ ...prev, [title]: res.summary }));
     } catch (err) {
       toast.error((err as Error).message);
@@ -52,7 +52,7 @@ export function KnowledgeBase() {
 
   const remove = async (title: string) => {
     try {
-      const res = await deleteDocument(title, userId);
+      const res = await deleteDocument(title);
       setSummaries((prev) => {
         const next = { ...prev };
         delete next[title];
@@ -67,7 +67,7 @@ export function KnowledgeBase() {
 
   const clearAll = async () => {
     try {
-      const res = await clearKnowledgeBase(userId);
+      const res = await clearKnowledgeBase();
       setSummaries({});
       setSuggestions([]);
       toast.success(`Cleared ${res.cleared} chunks.`);
@@ -92,9 +92,9 @@ export function KnowledgeBase() {
             {documents.slice(0, 30).map((d) => (
               <div key={d.title} className="flex items-center gap-2 text-xs">
                 {d.source === "upload" ? (
-                  <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted" />
                 ) : (
-                  <Newspaper className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                  <Newspaper className="h-3.5 w-3.5 shrink-0 text-muted" />
                 )}
                 <span className="flex-1 truncate text-zinc-300" title={d.title}>
                   {truncate(d.title, 30)}
@@ -103,7 +103,7 @@ export function KnowledgeBase() {
                   onClick={() => summarize(d.title)}
                   disabled={busyTitle === d.title}
                   title="Summarize"
-                  className="text-zinc-500 transition-colors hover:text-accent disabled:opacity-50"
+                  className="text-muted transition-colors hover:text-accent disabled:opacity-50"
                 >
                   {busyTitle === d.title ? (
                     <Spinner className="h-3.5 w-3.5" />
@@ -114,7 +114,7 @@ export function KnowledgeBase() {
                 <button
                   onClick={() => remove(d.title)}
                   title="Delete"
-                  className="text-zinc-500 transition-colors hover:text-rose-400"
+                  className="text-muted transition-colors hover:text-rose-400"
                 >
                   <Trash className="h-3.5 w-3.5" />
                 </button>
@@ -141,7 +141,7 @@ function Metric({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
       <div className="font-mono text-xl font-semibold tracking-tight text-white">{value}</div>
-      <div className="mt-0.5 text-[11px] text-zinc-500">{label}</div>
+      <div className="mt-0.5 text-[11px] text-muted">{label}</div>
     </div>
   );
 }

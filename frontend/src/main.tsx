@@ -7,6 +7,7 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { ToastProvider } from "./context/ToastContext";
@@ -26,15 +27,18 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {/* Precise, hairline Phosphor icons everywhere (never thick-stroked). */}
     <IconContext.Provider value={{ weight: "regular", size: 18 }}>
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <AuthProvider>
-            <SettingsProvider>
-              <App />
-            </SettingsProvider>
-          </AuthProvider>
-        </ToastProvider>
-      </QueryClientProvider>
+      {/* Outermost so it also catches throws from the providers themselves. */}
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <AuthProvider>
+              <SettingsProvider>
+                <App />
+              </SettingsProvider>
+            </AuthProvider>
+          </ToastProvider>
+        </QueryClientProvider>
+      </ErrorBoundary>
     </IconContext.Provider>
   </StrictMode>,
 );

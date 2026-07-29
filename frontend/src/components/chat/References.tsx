@@ -22,9 +22,9 @@ export function References({ references }: { references: Reference[] }) {
     <Collapsible
       title={
         <span className="flex items-center gap-2">
-          <Books className="h-4 w-4 text-zinc-500" />
+          <Books className="h-4 w-4 text-muted" />
           References ({references.length})
-          {label && <span className="text-zinc-500">— {label}</span>}
+          {label && <span className="text-muted">— {label}</span>}
         </span>
       }
     >
@@ -36,7 +36,7 @@ export function References({ references }: { references: Reference[] }) {
             className="rounded-lg border-l-2 border-accent/60 bg-white/[0.02] px-3 py-2 text-xs"
           >
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="font-mono text-zinc-500">[{i + 1}]</span>
+              <span className="font-mono text-muted">[{i + 1}]</span>
               <SourceBadge source={ref.source} />
               {ref.url ? (
                 <a
@@ -51,7 +51,7 @@ export function References({ references }: { references: Reference[] }) {
                 <span className="font-medium text-zinc-200">{ref.title}</span>
               )}
             </div>
-            <div className="mt-0.5 text-zinc-500">
+            <div className="mt-0.5 text-muted">
               {ref.authors} · {ref.published} · relevance: {ref.relevance_score.toFixed(2)}
             </div>
           </li>

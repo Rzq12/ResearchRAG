@@ -31,11 +31,24 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class LoginResponse(BaseModel):
-    success: bool
-    message: str
+class TokenResponse(BaseModel):
+    """Access + refresh pair returned by /login and /refresh."""
+
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int  # seconds until the access token expires
+    user_id: str
     display_name: str = ""
-    user_id: str = ""
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    display_name: str = ""
 
 
 # ─── Models / config ──────────────────────────────────────────────────────────
@@ -86,7 +99,6 @@ IngestMode = Literal["abstracts", "fulltext", "both"]
 class IngestOpenAlexRequest(BaseModel):
     works: list[OpenAlexWorkModel]
     mode: IngestMode = "abstracts"
-    user_id: str | None = None
 
 
 class FulltextDetail(BaseModel):
@@ -175,7 +187,6 @@ class PdfIngestResponse(BaseModel):
 
 class DeleteDocumentRequest(BaseModel):
     title: str
-    user_id: str | None = None
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -184,17 +195,12 @@ class DeleteDocumentResponse(BaseModel):
 
 class SummarizeRequest(BaseModel):
     title: str
-    user_id: str | None = None
     api_key: str
     model: str | None = None
 
 
 class SummarizeResponse(BaseModel):
     summary: str
-
-
-class ClearRequest(BaseModel):
-    user_id: str | None = None
 
 
 class ClearResponse(BaseModel):
@@ -218,7 +224,6 @@ class ChatRequest(BaseModel):
     chat_history: list[ChatMessage] = Field(default_factory=list)
     api_key: str
     model: str | None = None
-    user_id: str | None = None
     where: dict[str, Any] | None = None  # optional Chroma metadata filter
     # When True, answer strictly from the user's knowledge base and never fall
     # back to live OpenAlex/web. Defaults False to match the backend default.
@@ -229,7 +234,6 @@ class ChatRequest(BaseModel):
 
 class SemanticSearchRequest(BaseModel):
     query: str
-    user_id: str | None = None
     top_k: int = 15
     content_type_filter: str | None = None
     min_score: float = 0.0

@@ -27,7 +27,7 @@ export function Section({
     <section className={cn("space-y-3", className)}>
       <div className="flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-[13px] font-semibold tracking-tight text-zinc-200">
-          {icon && <span className="text-zinc-500">{icon}</span>}
+          {icon && <span className="text-muted">{icon}</span>}
           {title}
         </h3>
         {action}

@@ -47,7 +47,7 @@ export function ModelSelector() {
         onChange={(e) => setSelectedModel(e.target.value)}
       />
       {current?.hint_text && (
-        <p className="text-[11px] text-zinc-500">{stripLeadingSymbols(current.hint_text)}</p>
+        <p className="text-[11px] text-muted">{stripLeadingSymbols(current.hint_text)}</p>
       )}
 
       <Input
@@ -58,7 +58,7 @@ export function ModelSelector() {
         onChange={(e) => setKey(meta.store, e.target.value)}
       />
       <p className="flex items-center gap-1.5 text-[11px]">
-        <Key className="h-3.5 w-3.5 text-zinc-500" />
+        <Key className="h-3.5 w-3.5 text-muted" />
         {keyValue ? (
           <span className="flex items-center gap-1 text-accent">
             <CheckCircle className="h-3.5 w-3.5" weight="fill" /> Key active

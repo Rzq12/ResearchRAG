@@ -6,7 +6,7 @@ All heavy work (HTTP to OpenAlex, embedding, PDF download) runs in Starlette's
 threadpool because these handlers are declared ``def`` (not ``async def``).
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.openalex_service import (
     OpenAlexWork,
@@ -32,6 +32,8 @@ from api.schemas import (
     TopicsRequest,
     TopicsResponse,
 )
+from api.rate_limit import limiter
+from api.security import current_user
 from api.serialize import work_to_dict
 
 router = APIRouter(prefix="/api/openalex", tags=["openalex"])
@@ -53,7 +55,12 @@ def _to_work(model: OpenAlexWorkModel) -> OpenAlexWork:
 
 
 @router.post("/search", response_model=SearchResponse)
-def search(body: SearchRequest) -> SearchResponse:
+@limiter.limit("30/minute")
+def search(
+    request: Request,
+    body: SearchRequest,
+    user_id: str = Depends(current_user),
+) -> SearchResponse:
     """Search OpenAlex and return enriched work metadata (no ingestion)."""
     try:
         works = search_openalex(
@@ -67,7 +74,12 @@ def search(body: SearchRequest) -> SearchResponse:
 
 
 @router.post("/ingest", response_model=IngestOpenAlexResponse)
-def ingest(body: IngestOpenAlexRequest) -> IngestOpenAlexResponse:
+@limiter.limit("10/minute")
+def ingest(
+    request: Request,
+    body: IngestOpenAlexRequest,
+    user_id: str = Depends(current_user),
+) -> IngestOpenAlexResponse:
     """Ingest previously-searched works into the user's knowledge base."""
     works = [_to_work(w) for w in body.works]
     if not works:
@@ -77,11 +89,11 @@ def ingest(body: IngestOpenAlexRequest) -> IngestOpenAlexResponse:
     fulltext: FulltextSummary | None = None
 
     if body.mode in ("abstracts", "both"):
-        ingest_openalex_abstracts(works, user_id=body.user_id)
+        ingest_openalex_abstracts(works, user_id=user_id)
         abstracts_ingested = len(works)
 
     if body.mode in ("fulltext", "both"):
-        result = fetch_fulltext_batch(works, user_id=body.user_id)
+        result = fetch_fulltext_batch(works, user_id=user_id)
         fulltext = FulltextSummary(**result)
 
     return IngestOpenAlexResponse(
@@ -91,14 +103,24 @@ def ingest(body: IngestOpenAlexRequest) -> IngestOpenAlexResponse:
 
 
 @router.post("/citations", response_model=CitationsResponse)
-def citations(body: CitationsRequest) -> CitationsResponse:
+@limiter.limit("30/minute")
+def citations(
+    request: Request,
+    body: CitationsRequest,
+    user_id: str = Depends(current_user),
+) -> CitationsResponse:
     """Fetch the reference network ({openalex_id: title}) for one work."""
     refs = fetch_citation_network(body.openalex_id, api_key=body.api_key)
     return CitationsResponse(references=refs or {})
 
 
 @router.post("/topics", response_model=TopicsResponse)
-def topics(body: TopicsRequest) -> TopicsResponse:
+@limiter.limit("20/minute")
+def topics(
+    request: Request,
+    body: TopicsRequest,
+    user_id: str = Depends(current_user),
+) -> TopicsResponse:
     """Classify works into research topics via the Groq LLM."""
     works = [_to_work(w) for w in body.works]
     model = body.model or "llama-3.3-70b-versatile"
@@ -107,7 +129,12 @@ def topics(body: TopicsRequest) -> TopicsResponse:
 
 
 @router.post("/suggestions", response_model=SuggestionsResponse)
-def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
+@limiter.limit("20/minute")
+def suggestions(
+    request: Request,
+    body: SuggestionsRequest,
+    user_id: str = Depends(current_user),
+) -> SuggestionsResponse:
     """Generate follow-up research questions from ingested works or titles."""
     if body.works:
         works_or_titles: list = [_to_work(w) for w in body.works]

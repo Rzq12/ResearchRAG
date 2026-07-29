@@ -14,6 +14,7 @@ graphify-out/
 # Auth database — berisi hash password user, jangan pernah commit
 data/*.db
 **/.agents/
+**/.claude/
 # Cache tooling test
 .pytest_cache/
 

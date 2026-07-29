@@ -13,7 +13,7 @@ export default function App() {
     return (
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 bg-zinc-950">
         <Spinner className="h-6 w-6" />
-        <p className="text-sm text-zinc-500">Connecting to the ResearchRAG API…</p>
+        <p className="text-sm text-muted">Connecting to the ResearchRAG API…</p>
       </div>
     );
   }
@@ -27,11 +27,11 @@ export default function App() {
             {(error as Error)?.message ||
               "The backend did not respond. Make sure the FastAPI server is running."}
           </p>
-          <p className="mt-3 break-all text-xs text-zinc-500">
+          <p className="mt-3 break-all text-xs text-muted">
             Configured API base URL:{" "}
             <code className="font-mono text-zinc-300">{API_BASE_URL}</code>
           </p>
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-muted">
             Set <code className="font-mono text-zinc-300">VITE_API_BASE_URL</code> in your environment
             and reload.
           </p>

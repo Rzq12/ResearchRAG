@@ -20,7 +20,7 @@ export function PdfUpload() {
   const { setSuggestions } = useWorkspace();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const userId = session?.userId ?? null;
+  const scope = session?.userId ?? "anonymous";
   const maxMb = config?.max_upload_mb ?? 20;
 
   const [files, setFiles] = useState<File[]>([]);
@@ -37,7 +37,7 @@ export function PdfUpload() {
           continue;
         }
         try {
-          const res = await uploadPdf(f, userId);
+          const res = await uploadPdf(f);
           if (res.chunks_added > 0) {
             anyAdded = true;
             const cov = res.coverage?.coverage_pct;
@@ -53,8 +53,8 @@ export function PdfUpload() {
         }
       }
 
-      qc.invalidateQueries({ queryKey: ["documents", userId] });
-      qc.invalidateQueries({ queryKey: ["kb-stats", userId] });
+      qc.invalidateQueries({ queryKey: ["documents", scope] });
+      qc.invalidateQueries({ queryKey: ["kb-stats", scope] });
 
       if (anyAdded && activeApiKey) {
         const titles = files.map((f) => f.name.replace(/\.pdf$/i, ""));
@@ -73,7 +73,7 @@ export function PdfUpload() {
   return (
     <Section title="Upload PDF" icon={<Paperclip className="h-4 w-4" />}>
       <div className="space-y-3">
-        <label className="group flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-white/[0.10] bg-white/[0.02] px-3 py-5 text-center text-xs text-zinc-500 transition-colors duration-200 hover:border-accent/40 hover:text-zinc-300">
+        <label className="group flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed border-white/[0.10] bg-white/[0.02] px-3 py-5 text-center text-xs text-muted transition-colors duration-200 hover:border-accent/40 hover:text-zinc-300">
           <input
             ref={inputRef}
             type="file"

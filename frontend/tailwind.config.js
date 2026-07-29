@@ -16,6 +16,12 @@ export default {
           soft: "#34d399",
           deep: "#059669",
         },
+        // Secondary text tones that actually clear WCAG AA (4.5:1) against the
+        // zinc-950 page. Tailwind's zinc-500 measures 4.12:1 and zinc-600 only
+        // 2.57:1, so those were failing wherever they carried real text.
+        // Keeping two steps preserves the visual hierarchy the design relies on.
+        muted: "#8b8b96", // 5.4:1  — secondary text (was text-zinc-500)
+        subtle: "#7a7a85", // 4.6:1  — tertiary text/placeholders (was text-zinc-600)
       },
       transitionTimingFunction: {
         // Premium spring-ish curves — never linear/ease-in-out.

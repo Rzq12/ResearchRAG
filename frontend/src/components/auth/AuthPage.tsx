@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
-import { login as apiLogin, register as apiRegister } from "@/lib/api";
+import { register as apiRegister } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Tab = "login" | "signup";
@@ -66,7 +66,7 @@ export function AuthPage() {
               {tab === "login" ? <LoginForm /> : <SignupForm onDone={() => setTab("login")} />}
             </div>
 
-            <p className="mt-6 text-[12px] leading-relaxed text-zinc-600">
+            <p className="mt-6 text-[12px] leading-relaxed text-subtle">
               Credentials and vectors are stored locally. Passwords are never transmitted.
             </p>
           </div>
@@ -80,7 +80,7 @@ function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div className="bg-zinc-950 px-5 py-5">
       <dd className="num text-[19px] tracking-tight text-white">{value}</dd>
-      <dt className="mt-1.5 text-[11px] uppercase tracking-[0.14em] text-zinc-600">{label}</dt>
+      <dt className="mt-1.5 text-[11px] uppercase tracking-[0.14em] text-subtle">{label}</dt>
     </div>
   );
 }
@@ -124,13 +124,9 @@ function LoginForm() {
     }
     setLoading(true);
     try {
-      const res = await apiLogin(username, password);
-      if (res.success && res.user_id) {
-        toast.success(res.message);
-        login(res.user_id, res.display_name || res.user_id);
-      } else {
-        toast.error(res.message || "Login failed.");
-      }
+      // Throws on bad credentials; on success the token pair is stored and the
+      // auth subscription swaps this screen for the workspace.
+      await login(username, password);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {

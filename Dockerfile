@@ -39,11 +39,27 @@ RUN mkdir -p /app/data/chroma_db
 # Drop the distro's default site so it can't clash with our server block.
 RUN rm -f /etc/nginx/sites-enabled/default && chmod +x /app/deploy/start.sh
 
+# ── Least privilege ──────────────────────────────────────────────────────────
+# PyMuPDF/pdfplumber parse entirely untrusted input; running that as root means
+# any parser RCE owns the container. nginx normally wants root to bind :80 and
+# to write /var/{log,lib,run}/nginx — we listen on a high port and hand those
+# paths to appuser instead, so no privileged user is needed at runtime.
+RUN adduser --disabled-password --gecos "" --uid 10001 appuser \
+    && mkdir -p /var/cache/nginx /var/log/nginx /var/lib/nginx /var/run \
+    && chown -R appuser:appuser /app /var/cache/nginx /var/log/nginx /var/lib/nginx /var/run \
+    && touch /var/run/nginx.pid && chown appuser:appuser /var/run/nginx.pid \
+    && chown -R appuser:appuser /etc/nginx/conf.d
+
+USER appuser
+
 EXPOSE 8501
 
-# nginx proxies /_stcore/health straight to Streamlit, so this still works.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=4)"
+# Probes BOTH services: a dead API behind a live Streamlit used to report
+# healthy, so the platform never restarted it.
+HEALTHCHECK --interval=30s --timeout=8s --start-period=120s --retries=3 \
+  CMD python -c "import urllib.request as u; \
+u.urlopen('http://localhost:8501/_stcore/health', timeout=5); \
+u.urlopen('http://localhost:8501/api/health', timeout=5)"
 
 # Runs Streamlit AND the FastAPI wrapper behind nginx on one port.
 # To serve Streamlit only (the old behaviour), override with:
