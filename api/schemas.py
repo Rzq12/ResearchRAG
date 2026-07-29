@@ -183,6 +183,9 @@ class PdfIngestResponse(BaseModel):
     total_children: int = 0
     coverage: CoverageModel | None = None
     message: str | None = None
+    # True when this upload replaced an earlier revision of the same document,
+    # so the UI can say "updated" instead of "already indexed".
+    replaced_revision: bool = False
 
 
 class DeleteDocumentRequest(BaseModel):

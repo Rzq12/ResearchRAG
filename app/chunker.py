@@ -72,6 +72,11 @@ class DocumentChunk:
     section_path:  str
     section_title: str
     word_count:    int
+    # Fingerprint of the source document's bytes. Chunk ids are derived from it,
+    # so editing a PDF and re-uploading it under the same filename produces
+    # different ids instead of colliding with (and being discarded as) the old
+    # revision. Stored in metadata so ingestion can detect a superseded version.
+    doc_fp:        str = ""
 
     def to_metadata(self) -> dict:
         return {
@@ -79,6 +84,7 @@ class DocumentChunk:
             "source":        "upload",
             "filename":      self.source,
             "title":         self.source.replace(".pdf", ""),
+            "doc_fp":        self.doc_fp,
             "authors":       "Uploaded by user",
             "published":     "N/A",
             "url":           "",
@@ -146,6 +152,18 @@ _FOOTNOTE_PATTERN = re.compile(r"^\s*(?:\d+|[\*†‡§¶])\s+[A-Z]")
 def _stable_id(*parts: str) -> str:
     raw = "::".join(str(p) for p in parts)
     return hashlib.md5(raw.encode()).hexdigest()
+
+
+def document_fingerprint(pdf_bytes: bytes) -> str:
+    """
+    Short content hash identifying one revision of a document.
+
+    Chunk ids are derived from this rather than from the filename alone. Without
+    it, re-uploading a corrected paper under its original name produced
+    identical ids, every chunk was treated as an existing duplicate and skipped,
+    and the knowledge base kept answering from the superseded text — silently.
+    """
+    return hashlib.sha256(pdf_bytes).hexdigest()[:16]
 
 
 def _clean_text(raw: str) -> str:
@@ -397,6 +415,7 @@ def _make_child_chunks(
     blocks: list[RawBlock],
     table_blocks: list[RawBlock],
     source: str,
+    doc_fp: str = "",
 ) -> list[DocumentChunk]:
     """
     Produce child chunks (~180 words each, word-boundary aligned).
@@ -433,7 +452,7 @@ def _make_child_chunks(
             text  = " ".join(pending_words[pos:end]).strip()
             wc    = end - pos
             if wc >= 10 and text:
-                cid = _stable_id(source, "child", str(idx))
+                cid = _stable_id(source, doc_fp, "child", str(idx))
                 chunks.append(DocumentChunk(
                     chunk_id      = cid,
                     chunk_role    = "child",
@@ -446,6 +465,7 @@ def _make_child_chunks(
                     section_path  = pending_section_path,
                     section_title = pending_section_title,
                     word_count    = wc,
+                    doc_fp        = doc_fp,
                 ))
                 idx += 1
             if end >= len(pending_words):
@@ -462,7 +482,7 @@ def _make_child_chunks(
             text = block.text.strip()
             wc   = _word_count(text)
             if text:
-                cid = _stable_id(source, "child", str(idx))
+                cid = _stable_id(source, doc_fp, "child", str(idx))
                 chunks.append(DocumentChunk(
                     chunk_id      = cid,
                     chunk_role    = "child",
@@ -475,6 +495,7 @@ def _make_child_chunks(
                     section_path  = block.section_path,
                     section_title = block.section_title,
                     word_count    = wc,
+                    doc_fp        = doc_fp,
                 ))
                 idx += 1
             continue
@@ -510,6 +531,7 @@ def _make_child_chunks(
 def _make_parent_chunks(
     children: list[DocumentChunk],
     source: str,
+    doc_fp: str = "",
 ) -> tuple[list[DocumentChunk], list[DocumentChunk]]:
     """
     Group children_per_parent child chunks into one parent chunk.
@@ -530,7 +552,7 @@ def _make_parent_chunks(
         parent_title  = group[0].section_title
         parent_wc     = sum(c.word_count for c in group)
 
-        pid = _stable_id(source, "parent", str(gi))
+        pid = _stable_id(source, doc_fp, "parent", str(gi))
 
         parent = DocumentChunk(
             chunk_id      = pid,
@@ -544,6 +566,7 @@ def _make_parent_chunks(
             section_path  = parent_sec,
             section_title = parent_title,
             word_count    = parent_wc,
+            doc_fp        = doc_fp,
         )
         parents.append(parent)
 
@@ -561,6 +584,7 @@ def _make_parent_chunks(
                 section_path  = child.section_path,
                 section_title = child.section_title,
                 word_count    = child.word_count,
+                doc_fp        = doc_fp,
             ))
 
     return children_out, parents
@@ -592,6 +616,7 @@ def _fallback_page_chunks(
     missing_pages: list[int],
     source: str,
     start_index: int,
+    doc_fp: str = "",
 ) -> list[DocumentChunk]:
     """
     For pages without any chunk, extract raw page text as a single fallback chunk.
@@ -613,7 +638,7 @@ def _fallback_page_chunks(
         if not text:
             text = f"[Page {page_num}: no extractable content]"
 
-        cid = _stable_id(source, "fallback", str(page_num))
+        cid = _stable_id(source, doc_fp, "fallback", str(page_num))
         chunks.append(DocumentChunk(
             chunk_id      = cid,
             chunk_role    = "child",
@@ -626,6 +651,7 @@ def _fallback_page_chunks(
             section_path  = "",
             section_title = f"Page {page_num} (fallback)",
             word_count    = _word_count(text),
+            doc_fp        = doc_fp,
         ))
         idx += 1
 
@@ -679,7 +705,12 @@ def extract_pdf_chunks_advanced(
     Raises:
         ValueError  if PDF has no extractable text AND no OCR available.
     """
-    # 0. Open document to get total pages
+    # 0a. Fingerprint the exact bytes. Every chunk id derives from this, so a
+    #     revised PDF uploaded under the same filename yields new ids instead of
+    #     colliding with the previous revision and being discarded as duplicate.
+    doc_fp = document_fingerprint(pdf_bytes)
+
+    # 0b. Open document to get total pages
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_pages = len(doc)
 
@@ -736,7 +767,7 @@ def extract_pdf_chunks_advanced(
     all_blocks = _build_hierarchy(all_blocks)
 
     # 5. Child chunks
-    children = _make_child_chunks(all_blocks, table_blocks, filename)
+    children = _make_child_chunks(all_blocks, table_blocks, filename, doc_fp)
 
     # 6. Coverage verification
     _, report_pre = _verify_coverage(children, total_pages)
@@ -746,12 +777,12 @@ def extract_pdf_chunks_advanced(
     if report_pre.missing_pages:
         fallbacks = _fallback_page_chunks(
             pdf_bytes, report_pre.missing_pages, filename,
-            start_index=len(children),
+            start_index=len(children), doc_fp=doc_fp,
         )
         children.extend(fallbacks)
 
     # 8. Parent chunks
-    children_linked, parents = _make_parent_chunks(children, filename)
+    children_linked, parents = _make_parent_chunks(children, filename, doc_fp)
 
     # 9. Final report
     covered_pages = {c.page_num for c in children_linked}

@@ -156,14 +156,23 @@ def retrieve_chunks(
     parent_ids_ordered: list[str] = []
     seen_parent_ids: set[str]     = set()
     no_parent_candidates: list[dict] = []
+    # Best child score per parent. Parents are fetched by ID, not by similarity,
+    # so they have no score of their own — inheriting their strongest child's
+    # score is what makes the relevance figure shown next to a citation real.
+    parent_score: dict[str, float] = {}
 
     for c in candidates:
         pid = c["metadata"].get("parent_id", "")
-        if pid and pid not in seen_parent_ids:
-            parent_ids_ordered.append(pid)
-            seen_parent_ids.add(pid)
+        if pid:
+            parent_score[pid] = max(parent_score.get(pid, 0.0), float(c.get("_score", 0.0)))
+            if pid not in seen_parent_ids:
+                parent_ids_ordered.append(pid)
+                seen_parent_ids.add(pid)
+            # Further children of an already-queued parent are intentionally
+            # dropped: their text is contained in that parent, so re-adding them
+            # would duplicate the passage and double-count it as evidence.
         else:
-            # No parent_id: either old-pipeline chunk or parent lookup needed
+            # No parent_id: old-pipeline chunk or a fallback page chunk.
             no_parent_candidates.append(c)
 
     # Fetch parent chunks (large context) from parent collection
@@ -178,7 +187,12 @@ def retrieve_chunks(
         parent = parent_by_id.get(pid)
         if parent and parent.get("text"):
             final_chunks.append(parent["text"])
-            final_metadatas.append({**parent["metadata"], "_score": 1.0})
+            # Inherit the best child's score. This used to be hardcoded to 1.0,
+            # which meant every citation in the UI reported "relevance: 1.00"
+            # regardless of how marginal the match actually was.
+            final_metadatas.append(
+                {**parent["metadata"], "_score": round(parent_score.get(pid, 0.0), 4)}
+            )
         else:
             # Parent not found in parent collection → use child chunk as fallback
             # Find the child candidate that pointed to this parent_id
@@ -355,10 +369,22 @@ def build_context(chunks: list[str], metadatas: list[dict]) -> tuple[str, list[R
     return context, refs
 
 
-def format_references_for_prompt(refs: list[Reference]) -> str:
+def format_references_for_prompt(
+    refs: list[Reference],
+    numbers: list[int] | None = None,
+) -> str:
+    """
+    Render the reference list the LLM is allowed to cite from.
+
+    `numbers` lets the caller preserve the original citation numbers after some
+    references have been dropped (see _truncate_context). Numbering MUST match
+    the markers embedded in the context, otherwise the model is invited to cite
+    a label whose passage it never received.
+    """
+    labels = numbers if numbers is not None else list(range(1, len(refs) + 1))
     lines = []
-    for i, ref in enumerate(refs, 1):
-        line = f"[{i}] {ref.title}"
+    for label, ref in zip(labels, refs):
+        line = f"[{label}] {ref.title}"
         if ref.authors:
             line += f" — {ref.authors}"
         if ref.published and ref.published != "N/A":
@@ -439,16 +465,50 @@ def _prepare_context(
     return context, refs, "kb"
 
 
-def _truncate_context(
+# build_context emits two kinds of part: a per-document metadata header
+# ("--- Paper [3]: Title") and passage parts ("[3](Vaswani et al., 2017) …").
+_HEADER_PREFIX = "--- Paper "
+_PASSAGE_MARKER_RE = re.compile(r"^\[(\d+)\]")
+_HEADER_MARKER_RE = re.compile(r"^" + re.escape(_HEADER_PREFIX) + r"\[(\d+)\]")
+
+
+def _passage_backed_refs(parts: list[str]) -> set[int]:
+    """
+    Citation numbers that still have an actual passage in `parts`.
+
+    A surviving metadata header does NOT count: title and authors alone cannot
+    support a factual claim, so a reference reduced to its header must not be
+    offered to the model as citable.
+    """
+    found: set[int] = set()
+    for part in parts:
+        stripped = part.lstrip()
+        if stripped.startswith(_HEADER_PREFIX):
+            continue
+        match = _PASSAGE_MARKER_RE.match(stripped)
+        if match:
+            found.add(int(match.group(1)))
+    return found
+
+
+def _truncate_context_tracked(
     context: str,
     max_tokens: int = 8000,
     chars_per_token: int = 4,
-) -> str:
+) -> tuple[str, set[int]]:
     """
-    Trim context to stay within token budget.
-    Uses a simple char-based estimate (4 chars ≈ 1 token).
-    Removes chunks from the end (least relevant first, since build_context
-    orders by relevance descending).
+    Trim context to the token budget and report which citations survive.
+
+    Removes parts from the end (least relevant first, since build_context orders
+    by relevance descending), then drops any metadata header whose passages were
+    all removed — otherwise the context still advertises "--- Paper [5]" with
+    nothing behind it.
+
+    Returning the surviving numbers is the whole point: the caller MUST rebuild
+    the reference list from them. Previously the list was built from the full set
+    while the context was trimmed, so the model could be handed a label such as
+    [5] with no passage for it — an open invitation to fabricate support for the
+    citation, directly against the system prompt's "use ONLY the context" rule.
 
     Parameters
     ----------
@@ -457,16 +517,35 @@ def _truncate_context(
     chars_per_token: rough approximation (OpenAI/Groq tokenizers ≈ 4 chars/token)
     """
     max_chars = max_tokens * chars_per_token
-    if len(context) <= max_chars:
-        return context
-
-    # Split by double-newline (chunk boundaries), trim from the end
     parts = context.split("\n\n")
-    while parts and len("\n\n".join(parts)) > max_chars:
-        parts.pop()   # remove least-relevant chunk
 
-    trimmed = "\n\n".join(parts)
-    trimmed += "\n\n[... context truncated to fit token limit ...]" if trimmed else ""
+    if len(context) > max_chars:
+        while parts and len("\n\n".join(parts)) > max_chars:
+            parts.pop()  # drop least-relevant passage
+
+    survivors = _passage_backed_refs(parts)
+
+    # Drop headers left stranded by truncation.
+    kept_parts = []
+    for part in parts:
+        header = _HEADER_MARKER_RE.match(part.lstrip())
+        if header and int(header.group(1)) not in survivors:
+            continue
+        kept_parts.append(part)
+
+    trimmed = "\n\n".join(kept_parts)
+    if trimmed and len(kept_parts) < len(context.split("\n\n")):
+        trimmed += "\n\n[... context truncated to fit token limit ...]"
+    return trimmed, survivors
+
+
+def _truncate_context(
+    context: str,
+    max_tokens: int = 8000,
+    chars_per_token: int = 4,
+) -> str:
+    """Backward-compatible wrapper returning only the trimmed context."""
+    trimmed, _ = _truncate_context_tracked(context, max_tokens, chars_per_token)
     return trimmed
 
 
@@ -526,9 +605,13 @@ def ask(
     # Gemini has 1M context — no need to truncate aggressively.
     # Groq free tier: ~12k TPM — keep context under 9k tokens.
     budget  = 200_000 if _provider == "gemini" else cfg.max_tokens_response * 3
-    context = _truncate_context(context, max_tokens=budget)
+    # Truncate FIRST, then rebuild the reference list from what survived, so the
+    # model is never offered a citation label whose passage was trimmed away.
+    context, kept = _truncate_context_tracked(context, max_tokens=budget)
+    numbered       = [(n, r) for n, r in enumerate(refs, 1) if n in kept]
+    refs           = [r for _, r in numbered]
 
-    refs_text      = format_references_for_prompt(refs)
+    refs_text      = format_references_for_prompt(refs, numbers=[n for n, _ in numbered])
     openalex_count = sum(1 for r in refs if r.source == "openalex")
     upload_count   = sum(1 for r in refs if r.source == "upload")
 
@@ -611,9 +694,13 @@ def ask_stream(
 
     # Gemini: 1M context — large budget. Groq free tier: conservative 9k tokens.
     budget  = 200_000 if _provider == "gemini" else 9_000
-    context = _truncate_context(context, max_tokens=budget)
+    # Truncate FIRST, then rebuild the reference list from what survived, so the
+    # model is never offered a citation label whose passage was trimmed away.
+    context, kept = _truncate_context_tracked(context, max_tokens=budget)
+    numbered       = [(n, r) for n, r in enumerate(refs, 1) if n in kept]
+    refs           = [r for _, r in numbered]
 
-    refs_text      = format_references_for_prompt(refs)
+    refs_text      = format_references_for_prompt(refs, numbers=[n for n, _ in numbered])
     openalex_count = sum(1 for r in refs if r.source == "openalex")
     upload_count   = sum(1 for r in refs if r.source == "upload")
 

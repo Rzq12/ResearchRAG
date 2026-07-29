@@ -41,12 +41,17 @@ export function PdfUpload() {
           if (res.chunks_added > 0) {
             anyAdded = true;
             const cov = res.coverage?.coverage_pct;
+            const detail =
+              `${res.chunks_added} chunks` + (cov != null ? ` · coverage ${cov}%` : "");
+            // Distinguish a revision from a first ingest — silently accepting a
+            // corrected file and saying nothing is how stale answers happen.
             toast.success(
-              `${f.name}: ${res.chunks_added} chunks` +
-                (cov != null ? ` · coverage ${cov}%` : ""),
+              res.replaced_revision
+                ? `${f.name}: updated to this revision · ${detail}`
+                : `${f.name}: ${detail}`,
             );
           } else {
-            toast.info(`${f.name}: already indexed`);
+            toast.info(`${f.name}: already indexed (identical file)`);
           }
         } catch (err) {
           toast.warning(`${f.name}: ${(err as Error).message}`);
