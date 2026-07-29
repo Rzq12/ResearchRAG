@@ -5,37 +5,11 @@ from dataclasses import dataclass
 import re
 
 
-@dataclass
-class Reference:
-    title: str
-    authors: str
-    published: str
-    url: str
-    source: str
-    relevance_score: float
-
-
-@dataclass
-class RAGResponse:
-    answer: str
-    references: list[Reference]
-    openalex_papers_used: int
-    uploaded_docs_used: int
-
-
-SYSTEM_PROMPT = """You are a research assistant with access to scientific papers from OpenAlex and user-uploaded documents.
-
-Your job is to answer questions accurately, grounding your answer in the provided context.
-
-Rules:
-1. Base your answer ONLY on the provided context chunks.
-2. When referencing information, cite the paper using [1], [2], etc. matching the reference list.
-3. If multiple papers support a claim, cite all of them: [1][3].
-4. If the context doesn't contain enough information, say so honestly.
-5. Be concise but thorough. Use bullet points for complex answers.
-6. Always end with a brief summary of key references used.
-7. Write in the same language as the question (Indonesian or English).
-"""
+# NOTE: Reference, RAGResponse and SYSTEM_PROMPT are defined further down, just
+# above _system_prompt(). An earlier duplicate set used to sit here and was
+# silently shadowed by those later definitions — including a RAGResponse that
+# was missing the `reasoning` and `source` fields — so editing it appeared to
+# work and did nothing. Removed; keep exactly one definition of each.
 
 
 def _vector_candidates(
@@ -249,6 +223,12 @@ Rules:
 5. Be concise but thorough. Use bullet points for complex answers.
 6. Always end with a brief summary of key references used.
 7. Write in the same language as the question (Indonesian or English).
+8. Write formulas and mathematical symbols as LaTeX. Use $...$ for inline math
+   (e.g. $R^2 = 0.87$, $p < 0.05$, $\\alpha$) and $$...$$ on their own lines for
+   a display equation. Do not use \\( \\) or \\[ \\], and do not approximate
+   symbols in plain text.
+9. Escape a literal dollar amount as \\$ (e.g. \\$5 million). An unescaped $
+   opens a formula and swallows the text after it.
 """
 
 _REASONING_INSTRUCTIONS = """

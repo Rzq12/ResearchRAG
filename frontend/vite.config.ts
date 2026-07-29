@@ -61,7 +61,15 @@ export default defineConfig((env) => {
           manualChunks: {
             "vendor-react": ["react", "react-dom"],
             "vendor-query": ["@tanstack/react-query"],
-            "vendor-markdown": ["react-markdown", "remark-gfm"],
+            // katex is the heaviest of these by far; keeping it beside the
+            // markdown renderer means first paint never pays for it.
+            "vendor-markdown": [
+              "react-markdown",
+              "remark-gfm",
+              "remark-math",
+              "rehype-katex",
+              "katex",
+            ],
             "vendor-icons": ["@phosphor-icons/react"],
           },
         },

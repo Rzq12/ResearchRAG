@@ -299,4 +299,33 @@
   .prose-chat blockquote {
     @apply my-2 border-l-2 border-zinc-700 pl-3 text-zinc-400;
   }
+
+  /* ---- KaTeX ------------------------------------------------------------ */
+  /* katex.min.css assumes a light background and hard-codes nothing for
+     colour, so formulas only need to inherit the surrounding prose colour. */
+  .prose-chat .katex {
+    @apply text-current;
+    font-size: 1.05em;
+  }
+
+  /* A long derivation is the one thing that can break the chat bubble's width.
+     Scroll the block itself instead, and keep vertical padding so tall
+     delimiters and descenders are not clipped by the scroll container. */
+  .prose-chat .katex-display {
+    @apply my-3 overflow-x-auto overflow-y-hidden py-1;
+  }
+
+  /* rehypeKatexA11y gives this element tabindex=0 so the scroll area is
+     keyboard-reachable; a focusable element needs a visible focus ring
+     (WCAG 2.4.7), and the browser default is easy to lose on a dark bubble. */
+  .prose-chat .katex-display:focus-visible {
+    @apply rounded outline-none ring-1 ring-accent/50;
+  }
+
+  /* throwOnError is false, so a malformed formula arrives as .katex-error.
+     Its colour comes from KaTeX's `errorColor` inline style (see Markdown.tsx)
+     — an inline style outranks a class, so only the framing is set here. */
+  .prose-chat .katex-error {
+    @apply rounded bg-rose-950/30 px-1 font-mono text-[13px];
+  }
 }
