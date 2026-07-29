@@ -33,7 +33,29 @@ if (!RAW_BASE && import.meta.env.PROD) {
   throw new Error("VITE_API_BASE_URL is not configured for this production build.");
 }
 
-export const API_BASE_URL = (RAW_BASE || "http://localhost:8000").replace(/\/$/, "");
+/**
+ * Normalise the configured base URL.
+ *
+ * A value like "my-space.hf.space" (no scheme) is treated by fetch() as a
+ * RELATIVE path, so requests silently hit the frontend's own origin, the SPA
+ * rewrite answers with index.html, and the app reports a JSON parse error that
+ * looks nothing like the actual cause. The build now rejects that, but this
+ * keeps an already-deployed bad build working instead of appearing broken.
+ */
+function normaliseBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  const fixed = `https://${trimmed.replace(/^\/+/, "")}`;
+  console.warn(
+    `[ResearchRAG] VITE_API_BASE_URL "${raw}" has no scheme; assuming "${fixed}". ` +
+      "Set the full https:// URL in your environment to remove this warning.",
+  );
+  return fixed;
+}
+
+export const API_BASE_URL = normaliseBaseUrl(RAW_BASE || "http://localhost:8000");
 
 export class ApiError extends Error {
   status: number;

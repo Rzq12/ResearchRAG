@@ -11,14 +11,31 @@ import path from "node:path";
  */
 function assertProductionEnv({ mode }: ConfigEnv): void {
   if (mode !== "production") return;
-  if (process.env.VITE_API_BASE_URL) return;
 
-  throw new Error(
-    "\n[build] VITE_API_BASE_URL is not set.\n" +
-      "A production build must know where the ResearchRAG API lives.\n" +
-      "Set it in Vercel → Project → Settings → Environment Variables, e.g.\n" +
-      "  VITE_API_BASE_URL=https://<your-space>.hf.space\n",
-  );
+  const url = process.env.VITE_API_BASE_URL;
+
+  if (!url) {
+    throw new Error(
+      "\n[build] VITE_API_BASE_URL is not set.\n" +
+        "A production build must know where the ResearchRAG API lives.\n" +
+        "Set it in Vercel → Project → Settings → Environment Variables, e.g.\n" +
+        "  VITE_API_BASE_URL=https://<your-space>.hf.space\n",
+    );
+  }
+
+  // A value without a scheme is the nastiest failure mode here: fetch() treats
+  // it as a RELATIVE path, so every call lands on the Vercel origin, the SPA
+  // rewrite returns index.html, and the app reports
+  // "Unexpected token '<' ... is not valid JSON" — which looks like an API bug
+  // rather than a typo in an env var. Fail the build instead.
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error(
+      `\n[build] VITE_API_BASE_URL is missing its scheme: "${url}"\n` +
+        "Without https:// the browser resolves it as a relative path and every\n" +
+        "API call hits the frontend instead, returning HTML.\n" +
+        `Use:  VITE_API_BASE_URL=https://${url.replace(/^\/+/, "")}\n`,
+    );
+  }
 }
 
 // https://vite.dev/config/
