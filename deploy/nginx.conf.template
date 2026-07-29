@@ -42,12 +42,20 @@ server {
     # HSTS: the platform terminates TLS in front of us; this tells browsers to
     # never try plain HTTP again.
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    # This origin serves Streamlit, which must never be framed (clickjacking).
-    add_header X-Frame-Options            "DENY"            always;
+
+    # Clickjacking protection via CSP rather than X-Frame-Options.
+    # X-Frame-Options only understands DENY / SAMEORIGIN — it cannot express
+    # "allow this one other origin". Hugging Face renders every Space inside an
+    # iframe on huggingface.co, so DENY made the app unrenderable there.
+    # frame-ancestors allowlists exactly the hosts that may frame us and is
+    # honoured over X-Frame-Options by every modern browser.
+    add_header Content-Security-Policy    "frame-ancestors 'self' https://huggingface.co https://*.hf.space" always;
+
     add_header X-Content-Type-Options     "nosniff"         always;
     add_header Referrer-Policy            "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy         "camera=(), microphone=(), geolocation=(), payment=()" always;
-    add_header Cross-Origin-Opener-Policy "same-origin"     always;
+    # NOTE: Cross-Origin-Opener-Policy is deliberately omitted — "same-origin"
+    # severs the opener relationship the HF Spaces iframe relies on.
 
     # ── FastAPI (React frontend talks to these) ──────────────────────────────
     location /api/ {
