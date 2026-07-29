@@ -7,22 +7,28 @@
 # HF app_port default (8501). See deploy/start.sh.
 
 # NOTE: this file is included inside nginx's http{} block (conf.d/*.conf), so
-# only http-context directives belong here. The pid path is handled in the
-# Dockerfile by making /var/run/nginx.pid writable by appuser.
-
-# ── Compression ──────────────────────────────────────────────────────────────
-gzip              on;
-gzip_vary         on;
-gzip_min_length   1024;
-gzip_proxied      any;
-gzip_comp_level   5;
-gzip_types        text/plain text/css application/json application/javascript
-                  text/xml application/xml application/xml+rss text/javascript
-                  image/svg+xml;
+# only http-context directives belong here — and only ones the distro's
+# nginx.conf has not already set. Debian's stock nginx.conf declares `gzip on;`
+# at http level, so re-declaring it here is a hard "duplicate directive" error.
+# All compression settings therefore live inside server{} below, which is a
+# valid context for every gzip_* directive and cannot collide.
+#
+# The pid path is handled in the Dockerfile by making /var/run/nginx.pid
+# writable by appuser.
 
 server {
     listen ${NGINX_PORT};
     server_name _;
+
+    # ── Compression (server context — see note above) ────────────────────────
+    gzip              on;
+    gzip_vary         on;
+    gzip_min_length   1024;
+    gzip_proxied      any;
+    gzip_comp_level   5;
+    gzip_types        text/plain text/css application/json application/javascript
+                      text/xml application/xml application/xml+rss text/javascript
+                      image/svg+xml;
 
     # Large PDF uploads go through /api/documents/upload. Keep this at or above
     # MAX_UPLOAD_MB so the app returns a clean 413/422 instead of nginx cutting

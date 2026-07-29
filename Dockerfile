@@ -48,7 +48,10 @@ RUN adduser --disabled-password --gecos "" --uid 10001 appuser \
     && mkdir -p /var/cache/nginx /var/log/nginx /var/lib/nginx /var/run \
     && chown -R appuser:appuser /app /var/cache/nginx /var/log/nginx /var/lib/nginx /var/run \
     && touch /var/run/nginx.pid && chown appuser:appuser /var/run/nginx.pid \
-    && chown -R appuser:appuser /etc/nginx/conf.d
+    && chown -R appuser:appuser /etc/nginx/conf.d \
+    # `user www-data;` only applies when the master runs as root. We don't, so
+    # nginx would warn on every start; drop it to keep the logs meaningful.
+    && sed -i '/^user /d' /etc/nginx/nginx.conf
 
 USER appuser
 

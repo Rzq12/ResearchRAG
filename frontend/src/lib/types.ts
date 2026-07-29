@@ -76,6 +76,8 @@ export interface PdfIngestResult {
   total_children: number;
   coverage: Coverage | null;
   message?: string | null;
+  /** True when this upload superseded an earlier revision of the same document. */
+  replaced_revision: boolean;
 }
 
 export interface DocumentInfo {

@@ -3,11 +3,49 @@ PDF ingestion service for ResearchRAG.
 Uses the advanced chunker pipeline (hierarchical + layout-aware + parent-child).
 """
 
-from app.chunker import extract_pdf_chunks_advanced, CoverageReport
+from app.chunker import (
+    CoverageReport,
+    document_fingerprint,
+    extract_pdf_chunks_advanced,
+)
 from app.database import (
     get_collection, get_parent_collection,
     embed_documents, make_doc_id,
 )
+
+
+def _supersede_previous_revision(
+    title: str,
+    doc_fp: str,
+    user_id: str | None,
+) -> bool:
+    """
+    Remove an earlier revision of the same document, if one exists.
+
+    Documents are identified by title; a revision by its content fingerprint.
+    When the stored fingerprint differs from the incoming one the user has
+    edited and re-uploaded the file, so the old chunks are stale and must go —
+    otherwise both revisions sit in the index and retrieval can cite either.
+
+    Chunks ingested before fingerprinting existed carry no ``doc_fp``; those are
+    treated as an older revision too, so the first re-upload migrates them.
+
+    Returns True when a previous revision was removed.
+    """
+    from app.pdf_service import delete_document  # self-import keeps call explicit
+
+    collection = get_collection(user_id)
+    existing = collection.get(where={"title": title}, include=["metadatas"])
+    metadatas = existing.get("metadatas") or []
+    if not metadatas:
+        return False
+
+    stored_fps = {m.get("doc_fp", "") for m in metadatas}
+    if stored_fps == {doc_fp}:
+        return False  # same revision — normal duplicate skip applies
+
+    delete_document(title, user_id)
+    return True
 
 
 def ingest_pdf(
@@ -17,7 +55,12 @@ def ingest_pdf(
 ) -> dict:
     """
     Ingest a user-uploaded PDF into ChromaDB (child + parent collections).
-    Returns a summary dict including the CoverageReport.
+
+    Re-uploading an edited file under the same name REPLACES the previous
+    revision rather than being discarded as a duplicate.
+
+    Returns a summary dict including the CoverageReport and whether a previous
+    revision was superseded.
     """
     child_col  = get_collection(user_id)
     parent_col = get_parent_collection(user_id)
@@ -30,9 +73,15 @@ def ingest_pdf(
             "chunks_added":  0,
             "message":       "No text extracted",
             "coverage":      None,
+            "replaced_revision": False,
         }
 
     title = filename.replace(".pdf", "")
+
+    # Drop a stale revision before inserting the new one.
+    replaced = _supersede_previous_revision(
+        title, document_fingerprint(pdf_bytes), user_id
+    )
 
     # ── Ingest child chunks ────────────────────────────────────────────────
     child_texts, child_ids, child_metas = [], [], []
@@ -101,6 +150,7 @@ def ingest_pdf(
         "chunks_skipped": len(children) - len(child_texts),
         "parents_added": len(parent_texts),
         "coverage":      report,
+        "replaced_revision": replaced,
     }
 
 
