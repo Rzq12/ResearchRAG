@@ -396,6 +396,7 @@ def _prepare_context(
     api_key: str | None,
     model: str | None,
     where: dict | None,
+    kb_only: bool = False,
 ) -> tuple[str, list[Reference], str] | None:
     """
     Shared retrieval front-end for ask()/ask_stream():
@@ -404,6 +405,10 @@ def _prepare_context(
     Returns (context, refs, source) — source is "kb", "openalex-live", "web",
     or "none" (nothing relevant anywhere). Returns None when the KB is simply
     empty/unmatched and the caller should use _no_chunks_response.
+
+    kb_only: when True, never fall back to live OpenAlex/web — answer strictly
+    from the user's knowledge base (used by the React frontend's "KB-only"
+    toggle). Defaults to False, so existing callers (Streamlit) are unaffected.
     """
     chunks, metadatas = retrieve_chunks(
         query, user_id=user_id, api_key=api_key, model=model, where=where,
@@ -411,7 +416,8 @@ def _prepare_context(
 
     top1 = _resolve_relevance(metadatas)
     below_threshold = (
-        top1 is not None
+        not kb_only
+        and top1 is not None
         and top1 < getattr(cfg, "relevance_threshold", 0.5)
         and getattr(cfg, "enable_web_fallback", False)
     )
@@ -491,6 +497,7 @@ def ask(
     model: str | None = None,
     user_id: str | None = None,
     where: dict | None = None,        # optional metadata filter (year, section, …)
+    kb_only: bool = False,            # True → never fall back to live sources
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> RAGResponse:
@@ -505,7 +512,7 @@ def ask(
     if not _key:
         raise ValueError(f"API key required for provider '{_provider}'.")
 
-    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where)
+    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where, kb_only)
     if prepared is None:
         return _no_chunks_response(cfg, user_id)
 
@@ -555,6 +562,7 @@ def ask_stream(
     model: str | None = None,
     user_id: str | None = None,
     where: dict | None = None,         # optional metadata filter (year, section, …)
+    kb_only: bool = False,             # True → never fall back to live sources
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> tuple:
@@ -585,7 +593,7 @@ def ask_stream(
 
     empty_holder = {"think": ""}
 
-    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where)
+    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where, kb_only)
     if prepared is None:
         no_chunks = _no_chunks_response(cfg, user_id)
 

@@ -1,0 +1,11 @@
+# API-wrapper-only dependencies. These are ADDED on top of the root
+# requirements.txt (which already pins the RAG/embedding/LLM stack).
+# Install both:  pip install -r requirements.txt -r api/requirements.txt
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.18
+# Auth: JWT access tokens. Password hashing uses the stdlib (app/security.py),
+# so no native crypto build step is required.
+PyJWT==2.10.1
+# Rate limiting (per-user when authenticated, per-IP otherwise).
+slowapi==0.1.9

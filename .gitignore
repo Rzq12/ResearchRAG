@@ -10,10 +10,11 @@ venv/
 .DS_Store
 Thumbs.db
 *.log
-
+graphify-out/
 # Auth database — berisi hash password user, jangan pernah commit
 data/*.db
-
+**/.agents/
+**/.claude/
 # Cache tooling test
 .pytest_cache/
 
@@ -22,3 +23,8 @@ data/*.db
 eval/results/*
 !eval/results/baseline.json
 !eval/results/final-retrieval.json
+
+# React frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vercel/

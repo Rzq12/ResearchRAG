@@ -233,7 +233,14 @@ Aktifkan dengan set `ENABLE_RERANKER=true` di `.env`. Model `cross-encoder/ms-ma
 
 ```
 ResearchRAG/
-├── streamlit_app.py              # Frontend, auth gate & orchestration
+├── streamlit_app.py              # Streamlit frontend, auth gate & orchestration
+├── api/                          # FastAPI wrapper over app/ (for the React frontend)
+│   ├── main.py                   # app init, CORS, routers
+│   ├── routers/                  # auth, meta, openalex, documents, chat, search
+│   ├── schemas.py · serialize.py · settings.py
+│   └── requirements.txt          # fastapi, uvicorn, python-multipart
+├── frontend/                     # React (Vite + TS + Tailwind) — deploy to Vercel
+├── deploy/                       # nginx + start.sh (serve Streamlit + API together)
 ├── app/
 │   ├── auth.py                   # Login/signup — SQLite + salted SHA-256
 │   ├── config.py                 # Settings (pydantic-settings, .env)
@@ -297,6 +304,42 @@ git push -u origin main
 ### Hugging Face Spaces
 
 Sudah dikonfigurasi via `.github/workflows/main.yml` — setiap push ke branch `master` otomatis sync ke [HF Spaces](https://huggingface.co/spaces/riezqidr/ResearchRAG).
+
+---
+
+## ⚛️ React Frontend + REST API (opsional, untuk deploy ke Vercel)
+
+Selain Streamlit, tersedia **frontend React modern** (`frontend/`) yang memakai
+seluruh fitur backend lewat **thin FastAPI wrapper** (`api/`). Streamlit dan
+logika inference **tidak diubah** — API hanya membungkus modul `app/` yang sama.
+
+**Arsitektur deploy:** satu container (HF Space / Railway yang sama) menjalankan
+Streamlit **dan** FastAPI di belakang nginx (`deploy/nginx.conf.template`):
+`/api/*` → FastAPI, selain itu → Streamlit. React di Vercel memanggil URL
+`/api/*` Space tersebut.
+
+```
+Vercel (React)  ──HTTPS──►  HF Space / Railway  ──nginx──┬─ /api/* → FastAPI (api/) ─┐
+                                                          └─ /*     → Streamlit       ├─► app/ (RAG, sama)
+```
+
+**Jalankan lokal:**
+
+```bash
+# 1) Backend API
+pip install -r requirements.txt -r api/requirements.txt
+uvicorn api.main:app --reload --port 8000        # http://localhost:8000/docs
+
+# 2) Frontend
+cd frontend && cp .env.example .env && npm install && npm run dev   # http://localhost:5173
+```
+
+**Deploy:**
+- **Frontend → Vercel**: Root Directory `frontend/`, env `VITE_API_BASE_URL` = URL Space/Railway. Lihat [`frontend/README.md`](frontend/README.md).
+- **Backend**: ikut `Dockerfile` (sudah menjalankan Streamlit + API via nginx). Set `CORS_ORIGINS` ke URL Vercel.
+- Detail endpoint: [`api/README.md`](api/README.md).
+
+> Untuk kembali ke Streamlit-only, override `CMD` di `Dockerfile` (dijelaskan di komentar file tersebut).
 
 ---
 
