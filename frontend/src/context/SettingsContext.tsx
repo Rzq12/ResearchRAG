@@ -4,7 +4,10 @@ import { useLocalStorage } from "@/hooks/useLocalStorage";
 import type { Provider, WhereFilter } from "@/lib/types";
 
 /** Mirror of app.llm_client.get_provider — route provider from model id. */
-export function providerFromModel(model: string): Provider {
+// Module-private: exporting a non-component from a file that also exports a
+// component breaks React Fast Refresh for the whole module. Nothing outside
+// this file uses it.
+function providerFromModel(model: string): Provider {
   if (model.startsWith("hf:")) return "hf";
   if (model.startsWith("gemini")) return "gemini";
   return "groq";

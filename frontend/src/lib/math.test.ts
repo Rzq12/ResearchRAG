@@ -114,13 +114,54 @@ describe("normalizeMath", () => {
       expect(normalizeMath("No math here at all.")).toBe("No math here at all.");
     });
 
-    // Known, accepted limitation. Single-dollar inline math is kept enabled
-    // because models emit `$x$` constantly, but that means bare currency like
-    // "$5 and $10" is parsed as a formula downstream. normalizeMath does not
-    // guess at intent; the mitigation is the SYSTEM_PROMPT rule telling the
-    // model to write literal amounts as `\$5`.
-    it("passes bare currency through without escaping it", () => {
-      expect(normalizeMath("costs $5 and $10 total")).toBe("costs $5 and $10 total");
+    it("escapes a lone amount so it renders as text", () => {
+      expect(normalizeMath("it costs $5")).toBe("it costs \\$5");
+      expect(normalizeMath("it costs $10")).toBe("it costs \\$10");
+      expect(normalizeMath("it costs $100")).toBe("it costs \\$100");
+    });
+
+    it("escapes both ends of a price pair", () => {
+      expect(normalizeMath("costs $5 and $10 total")).toBe("costs \\$5 and \\$10 total");
+    });
+
+    it("escapes a price range", () => {
+      expect(normalizeMath("between $5-$10")).toBe("between \\$5-\\$10");
+      expect(normalizeMath("grant of $5,000.50 awarded")).toBe("grant of \\$5,000.50 awarded");
+    });
+
+    it("escapes currency inside a list item", () => {
+      expect(normalizeMath("- costs $5\n- costs $10")).toBe("- costs \\$5\n- costs \\$10");
+    });
+
+    it("escapes currency inside a table row", () => {
+      expect(normalizeMath("| $5 | $10 |")).toBe("| \\$5 | \\$10 |");
+    });
+
+    it("escapes currency mixed with markdown emphasis", () => {
+      expect(normalizeMath("**only $5** today")).toBe("**only \\$5** today");
+    });
+
+    // The other half of the contract: real formulas must survive untouched,
+    // including the ones that legitimately open with a digit.
+    it("keeps real math that starts with a digit", () => {
+      expect(normalizeMath("area is $2\\pi r$ exactly")).toBe("area is $2\\pi r$ exactly");
+      expect(normalizeMath("$5^2 = 25$")).toBe("$5^2 = 25$");
+      expect(normalizeMath("$1_{i}$")).toBe("$1_{i}$");
+    });
+
+    it("keeps currency and real math side by side", () => {
+      expect(normalizeMath("costs $5 but $E = mc^2$ holds")).toBe(
+        "costs \\$5 but $E = mc^2$ holds",
+      );
+    });
+
+    it("does not disturb display math that contains digits", () => {
+      expect(normalizeMath("$$\n5x + 2\n$$")).toBe("$$\n5x + 2\n$$");
+    });
+
+    it("does not escape a dollar inside code", () => {
+      expect(normalizeMath("`cost $5`")).toBe("`cost $5`");
+      expect(normalizeMath("```\ncost $5\n```")).toBe("```\ncost $5\n```");
     });
 
     it("leaves already-escaped currency alone", () => {

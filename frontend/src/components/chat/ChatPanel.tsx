@@ -14,7 +14,7 @@ import type { ChatMessage } from "@/lib/types";
 export function ChatPanel() {
   const { selectedModel, activeApiKey, whereFilter, kbOnly } = useSettings();
   const toast = useToast();
-  const { suggestions, pendingQuery, setPendingQuery } = useWorkspace();
+  const { suggestions } = useWorkspace();
   const { data: stats } = useKbStats();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -100,15 +100,6 @@ export function ChatPanel() {
     [streaming, activeApiKey, stats, messages, selectedModel, whereFilter, kbOnly, appendToLast, patchLast, toast],
   );
 
-  useEffect(() => {
-    if (pendingQuery && !streaming) {
-      const q = pendingQuery;
-      setPendingQuery(null);
-      send(q);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingQuery, streaming]);
-
   const stop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -184,8 +175,12 @@ export function ChatPanel() {
       </div>
 
       <div className="min-h-0 flex-1 space-y-8 overflow-y-auto scrollbar-thin px-2 pb-6">
+        {/* onPick calls send directly. It used to write the query into context
+            state so an effect could observe it and call send — a round trip
+            through state purely to invoke a function defined right here, whose
+            dependency list had to omit `send` to avoid re-firing. */}
         {suggestions.length > 0 && (
-          <Suggestions suggestions={suggestions} onPick={setPendingQuery} disabled={streaming} />
+          <Suggestions suggestions={suggestions} onPick={send} disabled={streaming} />
         )}
 
         {messages.length === 0 ? (

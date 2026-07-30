@@ -131,6 +131,19 @@ describe("Markdown", () => {
       expect(container.querySelectorAll(".katex")).toHaveLength(0);
       expect(container.textContent).toContain("$5");
     });
+
+    it("renders BARE currency as plain text end to end", () => {
+      const { container } = render(<Markdown>{"costs $5 and $10 total"}</Markdown>);
+      expect(container.querySelectorAll(".katex")).toHaveLength(0);
+      expect(container.textContent).toContain("$5");
+      expect(container.textContent).toContain("$10");
+    });
+
+    it("still renders a formula sitting next to currency", () => {
+      const { container } = render(<Markdown>{"costs $5 but $E = mc^2$ holds"}</Markdown>);
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(container.textContent).toContain("$5");
+    });
   });
 
   describe("math is not an HTML injection vector", () => {
