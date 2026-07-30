@@ -33,6 +33,68 @@ const DISPLAY_MATH = /\\\[([\s\S]+?)\\\]/g;
 const INLINE_MATH = /\\\(([\s\S]+?)\\\)/g;
 
 /**
+ * Characters that only appear in a formula, never in a price. Their presence
+ * between two dollars is what distinguishes `$5^2 = 25$` from `$5 and $`.
+ */
+const LATEX_HINT = /[\\^_{}]/;
+
+/**
+ * Escape dollar signs that introduce a monetary amount rather than a formula.
+ *
+ * `remark-math` treats `$` as a math delimiter, so "costs $5 and $10 total"
+ * silently renders "5 and " as a formula. The rule applied here: a `$`
+ * followed by a digit is currency *unless* the text up to the next `$` on the
+ * same line contains a LaTeX hint — which keeps genuinely digit-initial math
+ * such as `$2\pi r$` or `$5^2$` working.
+ *
+ * Must run before the bracket-delimiter rewrite below, so the dollars this
+ * module generates itself are never mistaken for currency.
+ */
+function escapeCurrency(prose: string): string {
+  let out = "";
+  let i = 0;
+
+  while (i < prose.length) {
+    const ch = prose[i];
+
+    // Copy any escape pair verbatim — notably an already-escaped `\$`, and the
+    // `\(` / `\[` openers that the next pass depends on.
+    if (ch === "\\") {
+      out += prose.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    // `$$` is a display delimiter, never currency.
+    if (ch === "$" && prose[i + 1] === "$") {
+      out += "$$";
+      i += 2;
+      continue;
+    }
+
+    if (ch === "$" && /\d/.test(prose[i + 1] ?? "")) {
+      const rest = prose.slice(i + 1);
+      const newline = rest.indexOf("\n");
+      const line = newline === -1 ? rest : rest.slice(0, newline);
+      const close = line.indexOf("$");
+      const inner = close === -1 ? null : line.slice(0, close);
+
+      // No closing dollar on this line, or nothing formula-like between them.
+      if (inner === null || !LATEX_HINT.test(inner)) {
+        out += "\\$";
+        i += 1;
+        continue;
+      }
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
+
+/**
  * Rewrite the LaTeX delimiters in one run of non-code markdown.
  *
  * Display math must end up with its `$$` fences alone on their own lines.
@@ -42,7 +104,7 @@ const INLINE_MATH = /\\\(([\s\S]+?)\\\)/g;
  * the surrounding paragraph, so no blank line is inserted.
  */
 function normalizeProse(prose: string): string {
-  return prose
+  return escapeCurrency(prose)
     .replace(DISPLAY_MATH, (_match, formula: string) => `\n$$\n${formula.trim()}\n$$\n`)
     .replace(INLINE_MATH, (_match, formula: string) => `$${formula}$`);
 }

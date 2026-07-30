@@ -3,6 +3,7 @@ import { ArrowRight, MagnifyingGlass, Sparkle } from "@phosphor-icons/react";
 
 import { useToast } from "@/context/ToastContext";
 import { useKbStats } from "@/hooks/useServerData";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { semanticSearch } from "@/lib/api";
 import type { SemanticHit } from "@/lib/types";
 import { cn, formatScore, scoreColour, truncate } from "@/lib/utils";
@@ -23,17 +24,17 @@ export function SemanticSearchPanel() {
   const [topK, setTopK] = useState(15);
   const [ctype, setCtype] = useState("All");
   const [minScore, setMinScore] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SemanticHit[] | null>(null);
   const [ranQuery, setRanQuery] = useState("");
 
-  const run = async (q = query) => {
-    const text = q.trim();
+  // The button was already disabled while loading, but the Enter handler below
+  // was not — so holding Enter fired one search per keyboard repeat.
+  const { run, pending: loading } = useSingleFlight(async (q?: string) => {
+    const text = (q ?? query).trim();
     if (!text) {
       toast.warning("Enter a search query first.");
       return;
     }
-    setLoading(true);
     try {
       const res = await semanticSearch({
         query: text,
@@ -45,10 +46,8 @@ export function SemanticSearchPanel() {
       setRanQuery(text);
     } catch (err) {
       toast.error((err as Error).message);
-    } finally {
-      setLoading(false);
     }
-  };
+  });
 
   const empty = !stats || stats.total_chunks === 0;
 

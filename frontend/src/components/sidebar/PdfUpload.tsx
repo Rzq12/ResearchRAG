@@ -9,6 +9,7 @@ import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useConfig } from "@/hooks/useServerData";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { getSuggestions, uploadPdf } from "@/lib/api";
 
 export function PdfUpload() {
@@ -24,13 +25,13 @@ export function PdfUpload() {
   const maxMb = config?.max_upload_mb ?? 20;
 
   const [files, setFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
 
-  const ingest = async () => {
+  // Latched: a second click re-uploaded every selected PDF through the full
+  // parse/embed pipeline and fired a second getSuggestions LLM call.
+  const { run: ingest, pending: busy } = useSingleFlight(async () => {
     if (!files.length) return;
-    setBusy(true);
     let anyAdded = false;
-    try {
+    {
       for (const f of files) {
         if (f.size > maxMb * 1024 * 1024) {
           toast.warning(`${f.name} is too large (max ${maxMb} MB).`);
@@ -70,10 +71,8 @@ export function PdfUpload() {
 
       setFiles([]);
       if (inputRef.current) inputRef.current.value = "";
-    } finally {
-      setBusy(false);
     }
-  };
+  });
 
   return (
     <Section title="Upload PDF" icon={<Paperclip className="h-4 w-4" />}>

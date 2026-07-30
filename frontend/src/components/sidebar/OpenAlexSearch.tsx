@@ -11,6 +11,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
 import {
   classifyTopics,
   getSuggestions,
@@ -39,16 +40,17 @@ export function OpenAlexSearch() {
   const [count, setCount] = useState(5);
   const [mode, setMode] = useState<IngestMode>("abstracts");
   const [openAlexKey, setOpenAlexKey] = useState(keys.openalex);
-  const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<OpenAlexWork[]>([]);
   const [topics, setTopics] = useState<Record<string, string>>({});
 
-  const run = async () => {
+  // Single-flight: one run fires searchOpenAlex + ingest + getSuggestions +
+  // classifyTopics, the last two of which are LLM calls. Re-entry — trivially
+  // reachable by holding Enter in the query box — multiplied that whole burst.
+  const { run, pending: loading } = useSingleFlight(async () => {
     if (!query.trim()) {
       toast.warning("Please enter a search query.");
       return;
     }
-    setLoading(true);
     try {
       const { works } = await searchOpenAlex(query, count, openAlexKey || undefined);
       if (!works.length) {
@@ -84,10 +86,8 @@ export function OpenAlexSearch() {
       }
     } catch (err) {
       toast.error((err as Error).message);
-    } finally {
-      setLoading(false);
     }
-  };
+  });
 
   const downloadAbstracts = (format: "txt" | "json") => {
     let content: string;

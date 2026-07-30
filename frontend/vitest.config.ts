@@ -28,6 +28,13 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
+      // Written under node_modules/.cache rather than ./coverage on purpose.
+      // The generated HTML report bundles vendored scripts carrying their own
+      // eslint-disable headers, which ESLint then reports as unused-directive
+      // warnings. node_modules is already ignored by ESLint, git and every
+      // other tool, so the artifact stops polluting `npm run lint` without
+      // weakening a single lint rule.
+      reportsDirectory: "node_modules/.cache/vitest-coverage",
       include: ["src/lib/**", "src/components/ui/**"],
     },
   },
