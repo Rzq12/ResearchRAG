@@ -16,11 +16,16 @@ export interface ChatStreamMeta {
   source: ChatSource;
 }
 
+/**
+ * Completion is signalled by the returned promise settling, not by a callback.
+ * A separate `onDone` was a second completion channel that every early return
+ * had to remember to fire — and the one path that could not fire it (abort)
+ * was exactly the path that left the caller's "streaming" flag stuck on.
+ */
 export interface ChatStreamHandlers {
   onToken: (text: string) => void;
   onMeta: (meta: ChatStreamMeta) => void;
   onError: (message: string) => void;
-  onDone: () => void;
 }
 
 export interface ChatStreamParams {
@@ -74,20 +79,15 @@ export async function streamChat(
       } else {
         clearSession();
         handlers.onError("Your session has expired. Please sign in again.");
-        handlers.onDone();
         return;
       }
     }
   } catch {
-    handlers.onError(`Cannot reach the API at ${API_BASE_URL}. Is the backend running?`);
-    handlers.onDone();
-    return;
+    handlers.onError(`Cannot reach the API at ${API_BASE_URL}. Is the backend running?`);    return;
   }
 
   if (res.status === 429) {
-    handlers.onError("You're sending messages too quickly. Please wait a moment and retry.");
-    handlers.onDone();
-    return;
+    handlers.onError("You're sending messages too quickly. Please wait a moment and retry.");    return;
   }
 
   // The backend sleeps when idle; while it reloads its models the proxy returns
@@ -96,9 +96,7 @@ export async function streamChat(
   if (res.status === 502 || res.status === 503 || res.status === 504) {
     handlers.onError(
       "The server is waking up and loading its models. Give it a minute, then send your question again.",
-    );
-    handlers.onDone();
-    return;
+    );    return;
   }
 
   if (!res.ok || !res.body) {
@@ -108,9 +106,7 @@ export async function streamChat(
     } catch {
       /* non-JSON body */
     }
-    handlers.onError(detail);
-    handlers.onDone();
-    return;
+    handlers.onError(detail);    return;
   }
 
   const reader = res.body.getReader();
@@ -144,9 +140,8 @@ export async function streamChat(
       case "error":
         handlers.onError((payload as { message: string }).message ?? "Unknown error.");
         break;
-      case "done":
-        handlers.onDone();
-        break;
+      // "done" needs no case: the frame simply ends the stream, and the caller
+      // learns that from the promise settling.
     }
   };
 
@@ -168,7 +163,6 @@ export async function streamChat(
   } catch (err) {
     if ((err as Error)?.name !== "AbortError") {
       handlers.onError("Connection interrupted while streaming the answer.");
-      handlers.onDone();
     }
   }
 }

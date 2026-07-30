@@ -1,27 +1,26 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 /**
- * Cross-panel workspace state that the sidebar and the chat both touch:
- *  - query suggestions produced after ingest (shown as chips in the chat)
- *  - a "pending query" set when the user clicks a suggestion chip
+ * Cross-panel workspace state that the sidebar and the chat both touch: the
+ * query suggestions produced after ingest, shown as chips in the chat.
+ *
+ * A `pendingQuery` field used to live here so a suggestion click could park the
+ * query in context for an effect in ChatPanel to notice and send. Nothing reads
+ * it any more — the chip calls `send` directly — and a state round-trip that
+ * triggers a network call from an effect is precisely the shape that makes
+ * duplicate requests easy to reintroduce.
  */
 interface WorkspaceContextValue {
   suggestions: string[];
   setSuggestions: (s: string[]) => void;
-  pendingQuery: string | null;
-  setPendingQuery: (q: string | null) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
 
-  const value = useMemo(
-    () => ({ suggestions, setSuggestions, pendingQuery, setPendingQuery }),
-    [suggestions, pendingQuery],
-  );
+  const value = useMemo(() => ({ suggestions, setSuggestions }), [suggestions]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

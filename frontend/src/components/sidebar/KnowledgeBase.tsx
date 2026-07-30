@@ -12,6 +12,7 @@ import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useDocuments, useKbStats } from "@/hooks/useServerData";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { clearKnowledgeBase, deleteDocument, summarizeDocument } from "@/lib/api";
 import { truncate } from "@/lib/utils";
 
@@ -34,7 +35,9 @@ export function KnowledgeBase() {
     qc.invalidateQueries({ queryKey: ["kb-stats", scope] });
   };
 
-  const summarize = async (title: string) => {
+  // Latched: summarize is an LLM call, and `busyTitle` was written but never
+  // checked, so repeated clicks on the same document each spent a completion.
+  const { run: summarize } = useSingleFlight(async (title: string) => {
     if (!activeApiKey) {
       toast.warning("An API key is required to summarize. Set one above.");
       return;
@@ -48,7 +51,7 @@ export function KnowledgeBase() {
     } finally {
       setBusyTitle(null);
     }
-  };
+  });
 
   const remove = async (title: string) => {
     try {

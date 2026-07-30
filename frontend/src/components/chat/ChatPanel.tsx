@@ -22,6 +22,27 @@ export function ChatPanel() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Synchronous re-entry latch.
+   *
+   * `streaming` cannot guard this on its own: setState is not visible to another
+   * handler in the same event batch, so a double-click or a mashed Enter fired
+   * two streams for one question — and each question costs three upstream LLM
+   * calls (HyDE ×2 + the completion), so the duplicate burned six. This ref
+   * flips before anything async, closing that window.
+   */
+  const inFlightRef = useRef(false);
+
+  /**
+   * Mirror of `messages` for reading history at send time. Keeping the history
+   * read off state means `send` no longer changes identity on every token that
+   * streams in.
+   */
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
@@ -45,9 +66,26 @@ export function ChatPanel() {
     });
   }, []);
 
+  /**
+   * Single place that ends a turn; safe to call more than once.
+   *
+   * Takes the controller that owns the turn so a superseded stream cannot clear
+   * a newer one's state: stopping a turn and immediately asking again means the
+   * abandoned stream's settle handler still runs, and without this check it
+   * would unlatch the turn that had just started.
+   */
+  const finish = useCallback((controller: AbortController) => {
+    if (abortRef.current !== controller) return;
+    inFlightRef.current = false;
+    abortRef.current = null;
+    setStreaming(false);
+  }, []);
+
   const send = useCallback(
     (text: string) => {
-      if (streaming) return;
+      // Latch first — before any branch that can yield to the event loop.
+      if (inFlightRef.current) return;
+
       if (!activeApiKey) {
         toast.error("Set an API key in the sources panel for the selected model first.");
         return;
@@ -57,9 +95,18 @@ export function ChatPanel() {
         return;
       }
 
-      const history = messages
-        .filter((m) => !m.error)
-        .map((m) => ({ role: m.role, content: m.content }));
+      inFlightRef.current = true;
+
+      // Drop failed turns AND the question that produced them: replaying a
+      // user message whose answer errored just re-asks it as phantom context.
+      const history: Pick<ChatMessage, "role" | "content">[] = [];
+      for (const m of messagesRef.current) {
+        if (m.error) {
+          if (history[history.length - 1]?.role === "user") history.pop();
+          continue;
+        }
+        history.push({ role: m.role, content: m.content });
+      }
 
       setMessages((prev) => [
         ...prev,
@@ -90,21 +137,33 @@ export function ChatPanel() {
               source: meta.source,
             }),
           onError: (message) => patchLast({ content: message, error: true }),
-          onDone: () => {
-            setStreaming(false);
-            abortRef.current = null;
-          },
         },
-      );
+      )
+        .catch(() => patchLast({ content: "The answer stream failed.", error: true }))
+        // The promise settling is the one signal that always arrives — on
+        // success, on error and on abort. Releasing the latch anywhere else
+        // risks wedging the composer shut for the rest of the session.
+        .finally(() => finish(controller));
     },
-    [streaming, activeApiKey, stats, messages, selectedModel, whereFilter, kbOnly, appendToLast, patchLast, toast],
+    [
+      activeApiKey,
+      stats,
+      selectedModel,
+      whereFilter,
+      kbOnly,
+      appendToLast,
+      patchLast,
+      toast,
+      finish,
+    ],
   );
 
   const stop = () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
-    if (messages[messages.length - 1]?.content === "") {
+    const controller = abortRef.current;
+    if (!controller) return;
+    controller.abort();
+    finish(controller);
+    if (messagesRef.current[messagesRef.current.length - 1]?.content === "") {
       patchLast({ content: "_(stopped)_" });
     }
   };
