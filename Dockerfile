@@ -25,11 +25,10 @@ RUN pip install --no-cache-dir -r api/requirements.txt
 # Pre-download models at build time (faster cold start; ~1.6 GB total).
 # Must match EMBEDDING_MODEL / RERANKER_MODEL in app/config.py — a mismatch
 # means the container re-downloads at runtime.
-# Version-locked to specific commits to prevent silent model changes.
 RUN python -c "from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('intfloat/multilingual-e5-base', revision='d13f1b27baf31030b7fd040960d60d909913633f')"
+SentenceTransformer('intfloat/multilingual-e5-base')"
 RUN python -c "from sentence_transformers import CrossEncoder; \
-CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1', revision='9a286d4fd8c6dc58c6c0fa3e1dd86da8a558be6c')"
+CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')"
 
 COPY . .
 
