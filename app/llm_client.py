@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 from typing import Generator
+from app.logger import logger
 
 
 # ─── Model catalog ────────────────────────────────────────────────────────────
@@ -161,6 +162,8 @@ def _call_groq(
         temperature = temperature,
         max_tokens  = max_tokens,
     )
+    tokens = response.usage.total_tokens
+    logger.info(f"llm_call provider=groq model={model} tokens={tokens} est_cost=${tokens * 0.00001:.4f}")
     return response.choices[0].message.content
 
 

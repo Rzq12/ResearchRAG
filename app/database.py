@@ -10,11 +10,9 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 from app.config import get_settings
+from app.logger import logger
 import hashlib
-import logging
 import threading
-
-logger = logging.getLogger(__name__)
 
 _client      = None
 _collections: dict[str, chromadb.Collection] = {}

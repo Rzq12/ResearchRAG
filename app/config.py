@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # drops below MiniLM. If RAM is tight (free-tier container), switch to
     # intfloat/multilingual-e5-small (~470 MB loaded vs ~1.1 GB for base).
     embedding_model: str = "intfloat/multilingual-e5-base"
+    embedding_model_revision: str = "d13f1b27baf31030b7fd040960d60d909913633f"
     embedding_query_prefix: str = "query: "
     embedding_passage_prefix: str = "passage: "
 
@@ -82,6 +83,7 @@ class Settings(BaseSettings):
     # separation. GPU-quality upgrade: BAAI/bge-reranker-v2-m3 (~2.2 GB).
     enable_reranker: bool = True
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    reranker_model_revision: str = "9a286d4fd8c6dc58c6c0fa3e1dd86da8a558be6c"
     reranker_top_k: int = 5            # top-k candidates after reranking
     rerank_max_candidates: int = 20    # cap pairs sent to the cross-encoder (CPU cost)
 

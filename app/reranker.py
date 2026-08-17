@@ -14,11 +14,9 @@ Enable via config: ENABLE_RERANKER=true (default on).
 
 from __future__ import annotations
 
-import logging
+from app.logger import logger
 import math
 import threading
-
-logger = logging.getLogger(__name__)
 
 _cross_encoders: dict[str, object] = {}
 # Under Streamlit this init was effectively serialised. FastAPI runs every sync

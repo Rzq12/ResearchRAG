@@ -1,6 +1,7 @@
 from app.llm_client import call_llm, stream_llm, get_provider
 from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_query
 from app.config import get_settings
+from app.logger import logger
 from dataclasses import dataclass
 import re
 
@@ -115,6 +116,7 @@ def retrieve_chunks(
                 for r in reranked
             ]
             top1_score = candidates[0]["_score"] if candidates else 0.0
+            logger.info(f"retrieval query={query[:60]} top1_score={top1_score:.3f} num_candidates={len(candidates)}")
         except Exception as exc:
             print(f"[Reranker] failed, using fusion order: {exc}")
             candidates = candidates[:k]
