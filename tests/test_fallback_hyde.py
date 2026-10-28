@@ -48,7 +48,7 @@ def test_openalex_fallback_survives_api_error(monkeypatch):
 def test_hyde_generates_n_hypotheticals(monkeypatch):
     calls = []
 
-    def fake_llm(model, messages, api_key, max_tokens, temperature):
+    def fake_llm(model, messages, api_key, max_tokens, temperature, base_url=None):
         calls.append(messages)
         return "A hypothetical abstract paragraph."
 
@@ -61,7 +61,7 @@ def test_hyde_generates_n_hypotheticals(monkeypatch):
 def test_hyde_system_prompt_enforces_same_language(monkeypatch):
     captured = {}
 
-    def fake_llm(model, messages, api_key, max_tokens, temperature):
+    def fake_llm(model, messages, api_key, max_tokens, temperature, base_url=None):
         captured["system"] = messages[0]["content"]
         return "ok"
 

@@ -1,20 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { DownloadSimple, Eraser, Flask } from "@phosphor-icons/react";
 
 import { ChatInput } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
-import { Suggestions } from "./Suggestions";
+import { FollowUps, Suggestions } from "./Suggestions";
 import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useKbStats } from "@/hooks/useServerData";
+import { getFollowups } from "@/lib/api";
 import { streamChat } from "@/lib/chatStream";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, ChatSource } from "@/lib/types";
 
 export function ChatPanel() {
-  const { selectedModel, activeApiKey, whereFilter, kbOnly } = useSettings();
+  const {
+    llm,
+    llmReady,
+    llmMissing,
+    whereFilter,
+    kbOnly,
+    followupsEnabled,
+    suggestionLanguage,
+    setSuggestionLanguage,
+  } = useSettings();
   const toast = useToast();
-  const { suggestions } = useWorkspace();
+  const {
+    suggestions,
+    suggestionStatus,
+    suggestionError,
+    refreshSuggestions,
+    markSuggestionUsed,
+  } = useWorkspace();
   const { data: stats } = useKbStats();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -81,21 +97,47 @@ export function ChatPanel() {
     setStreaming(false);
   }, []);
 
-  const send = useCallback(
-    (text: string) => {
-      // Latch first — before any branch that can yield to the event loop.
-      if (inFlightRef.current) return;
+  /** Source of the turn ids that follow-up results are matched against. */
+  const turnSeqRef = useRef(0);
 
-      if (!activeApiKey) {
-        toast.error("Set an API key in the sources panel for the selected model first.");
-        return;
+  /**
+   * Fetch follow-ups for a finished turn and attach them to that turn's
+   * message. Matched by id, not position: the user may have cleared the thread
+   * or asked again before the follow-ups came back.
+   */
+  const loadFollowups = useCallback(
+    (turnId: string, question: string, answer: string) => {
+      getFollowups(llm, { question, answer })
+        .then((res) => {
+          const followups = res.suggestions ?? [];
+          if (!followups.length) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.turnId === turnId ? { ...m, followups } : m)),
+          );
+        })
+        // Follow-ups are an extra; a failure leaves the answer as it is.
+        .catch(() => undefined);
+    },
+    [llm],
+  );
+
+  /** Returns true when the question was actually sent. */
+  const send = useCallback(
+    (text: string): boolean => {
+      // Latch first — before any branch that can yield to the event loop.
+      if (inFlightRef.current) return false;
+
+      if (!llmReady) {
+        toast.error(llmMissing ?? "Configure a model in the sources panel first.");
+        return false;
       }
       if (!stats || stats.total_chunks === 0) {
         toast.warning("Knowledge base is empty — search OpenAlex or upload a PDF first.");
-        return;
+        return false;
       }
 
       inFlightRef.current = true;
+      const turnId = `turn-${++turnSeqRef.current}`;
 
       // Drop failed turns AND the question that produced them: replaying a
       // user message whose answer errored just re-asks it as phantom context.
@@ -111,51 +153,92 @@ export function ChatPanel() {
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text },
-        { role: "assistant", content: "" },
+        { role: "assistant", content: "", turnId },
       ]);
       setStreaming(true);
 
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Tracked locally: state has not necessarily flushed when the stream settles.
+      let answer = "";
+      let source: ChatSource | undefined;
+      let failed = false;
+
       streamChat(
         {
           query: text,
           chatHistory: history,
-          apiKey: activeApiKey,
-          model: selectedModel,
+          llm,
           where: whereFilter,
           kbOnly,
           signal: controller.signal,
         },
         {
-          onToken: (t) => appendToLast(t),
-          onMeta: (meta) =>
+          onToken: (t) => {
+            answer += t;
+            appendToLast(t);
+          },
+          onMeta: (meta) => {
+            source = meta.source;
             patchLast({
               references: meta.references,
               reasoning: meta.reasoning,
               source: meta.source,
-            }),
-          onError: (message) => patchLast({ content: message, error: true }),
+            });
+          },
+          onError: (message) => {
+            failed = true;
+            patchLast({ content: message, error: true });
+          },
         },
       )
-        .catch(() => patchLast({ content: "The answer stream failed.", error: true }))
+        .catch(() => {
+          failed = true;
+          patchLast({ content: "The answer stream failed.", error: true });
+        })
         // The promise settling is the one signal that always arrives — on
         // success, on error and on abort. Releasing the latch anywhere else
         // risks wedging the composer shut for the rest of the session.
-        .finally(() => finish(controller));
+        .finally(() => {
+          finish(controller);
+          // Only a complete, sourced answer is worth an extra LLM call.
+          const answered = source !== undefined && source !== "none";
+          if (followupsEnabled && answered && !failed && !controller.signal.aborted) {
+            loadFollowups(turnId, text, answer);
+          }
+        });
+      return true;
     },
     [
-      activeApiKey,
+      llm,
+      llmReady,
+      llmMissing,
       stats,
-      selectedModel,
       whereFilter,
       kbOnly,
+      followupsEnabled,
       appendToLast,
       patchLast,
       toast,
       finish,
+      loadFollowups,
     ],
+  );
+
+  const pickSuggestion = useCallback(
+    (question: string) => {
+      if (send(question)) markSuggestionUsed(question);
+    },
+    [send, markSuggestionUsed],
+  );
+
+  const changeSuggestionLanguage = useCallback(
+    (language: typeof suggestionLanguage) => {
+      setSuggestionLanguage(language);
+      void refreshSuggestions({ language });
+    },
+    [setSuggestionLanguage, refreshSuggestions],
   );
 
   const stop = () => {
@@ -234,24 +317,43 @@ export function ChatPanel() {
       </div>
 
       <div className="min-h-0 flex-1 space-y-8 overflow-y-auto scrollbar-thin px-2 pb-6">
-        {/* onPick calls send directly. It used to write the query into context
+        {/* Chips call send directly. They used to write the query into context
             state so an effect could observe it and call send — a round trip
             through state purely to invoke a function defined right here, whose
             dependency list had to omit `send` to avoid re-firing. */}
-        {suggestions.length > 0 && (
-          <Suggestions suggestions={suggestions} onPick={send} disabled={streaming} />
-        )}
-
         {messages.length === 0 ? (
-          <EmptyState />
+          // Starter questions belong to an empty thread; once it is under way,
+          // follow-ups under the latest answer take over.
+          <div className="flex min-h-full flex-col justify-center gap-8 py-8">
+            <EmptyState />
+            {((stats?.documents ?? 0) > 0 || suggestions.length > 0) && (
+              <Suggestions
+                suggestions={suggestions}
+                status={suggestionStatus}
+                error={suggestionError}
+                language={suggestionLanguage}
+                onLanguageChange={changeSuggestionLanguage}
+                onPick={pickSuggestion}
+                onRegenerate={() => void refreshSuggestions()}
+                disabled={streaming}
+              />
+            )}
+          </div>
         ) : (
-          messages.map((m, i) => (
-            <MessageBubble
-              key={i}
-              message={m}
-              streaming={streaming && i === messages.length - 1 && m.role === "assistant"}
-            />
-          ))
+          messages.map((m, i) => {
+            const isLast = i === messages.length - 1;
+            return (
+              <Fragment key={i}>
+                <MessageBubble
+                  message={m}
+                  streaming={streaming && isLast && m.role === "assistant"}
+                />
+                {isLast && !streaming && m.followups && (
+                  <FollowUps questions={m.followups} onPick={send} />
+                )}
+              </Fragment>
+            );
+          })
         )}
         <div ref={bottomRef} />
       </div>
@@ -259,7 +361,7 @@ export function ChatPanel() {
       <div className="shrink-0 px-2">
         <ChatInput onSend={send} onStop={stop} streaming={streaming} />
         <div className="flex items-center gap-3 px-3 pb-2 text-[11.5px] text-subtle">
-          <span className="truncate">{selectedModel}</span>
+          <span className="truncate">{llm.model}</span>
           <span className="text-muted">·</span>
           <span className="whitespace-nowrap">
             {kbOnly ? "grounded in library only" : "web fallback enabled"}
@@ -272,7 +374,7 @@ export function ChatPanel() {
 
 function EmptyState() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 py-16 text-center">
+    <div className="flex flex-col items-center justify-center gap-5 text-center">
       <div className="grid h-14 w-14 place-items-center rounded-2xl border border-accent/25 bg-accent/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
         <Flask className="h-6 w-6 text-accent" />
       </div>

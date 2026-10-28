@@ -12,12 +12,7 @@ import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
-import {
-  classifyTopics,
-  getSuggestions,
-  ingestOpenAlex,
-  searchOpenAlex,
-} from "@/lib/api";
+import { classifyTopics, ingestOpenAlex, searchOpenAlex } from "@/lib/api";
 import type { IngestMode, OpenAlexWork } from "@/lib/types";
 import { topicColour, truncate } from "@/lib/utils";
 
@@ -29,10 +24,10 @@ const MODES: { value: IngestMode; label: string }[] = [
 
 export function OpenAlexSearch() {
   const { session } = useAuth();
-  const { selectedModel, activeApiKey, keys } = useSettings();
+  const { keys } = useSettings();
   const toast = useToast();
   const qc = useQueryClient();
-  const { setSuggestions } = useWorkspace();
+  const { refreshSuggestions } = useWorkspace();
 
   const scope = session?.userId ?? "anonymous";
 
@@ -43,7 +38,7 @@ export function OpenAlexSearch() {
   const [results, setResults] = useState<OpenAlexWork[]>([]);
   const [topics, setTopics] = useState<Record<string, string>>({});
 
-  // Single-flight: one run fires searchOpenAlex + ingest + getSuggestions +
+  // Single-flight: one run fires searchOpenAlex + ingest + suggestions +
   // classifyTopics, the last two of which are LLM calls. Re-entry — trivially
   // reachable by holding Enter in the query box — multiplied that whole burst.
   const { run, pending: loading } = useSingleFlight(async () => {
@@ -73,14 +68,13 @@ export function OpenAlexSearch() {
         if (failed) toast.warning(`No open-access PDF: ${failed} paper(s).`);
       }
 
-      if (activeApiKey) {
-        getSuggestions({ works, api_key: activeApiKey, model: selectedModel })
-          .then((r) => setSuggestions(r.suggestions))
-          .catch(() => undefined);
-      }
-      const groqKey = keys.groq || activeApiKey;
-      if (groqKey) {
-        classifyTopics(works, groqKey)
+      // Not awaited: the questions arrive in the chat panel on their own time.
+      void refreshSuggestions({ titles: works.map((w) => w.title) });
+      // The topic classifier always runs on Groq. Only a Groq key may be sent:
+      // falling back to the active key would hand a Gemini or custom-endpoint
+      // key to Groq.
+      if (keys.groq) {
+        classifyTopics(works, keys.groq)
           .then((r) => setTopics((prev) => ({ ...prev, ...r.labels })))
           .catch(() => undefined);
       }

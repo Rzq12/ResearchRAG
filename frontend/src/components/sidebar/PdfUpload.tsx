@@ -5,20 +5,23 @@ import { FilePdf, Paperclip, UploadSimple } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/Button";
 import { Section } from "@/components/ui/Card";
 import { useAuth } from "@/context/AuthContext";
-import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/context/ToastContext";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { useConfig } from "@/hooks/useServerData";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
-import { getSuggestions, uploadPdf } from "@/lib/api";
+import { uploadPdf } from "@/lib/api";
+
+/** Mirror of app/pdf_service.py: a PDF's KB title is `filename.replace(".pdf", "")`. */
+function kbTitleFromFilename(filename: string): string {
+  return filename.split(".pdf").join("");
+}
 
 export function PdfUpload() {
   const { session } = useAuth();
-  const { selectedModel, activeApiKey } = useSettings();
   const { data: config } = useConfig();
   const toast = useToast();
   const qc = useQueryClient();
-  const { setSuggestions } = useWorkspace();
+  const { refreshSuggestions } = useWorkspace();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const scope = session?.userId ?? "anonymous";
@@ -27,10 +30,10 @@ export function PdfUpload() {
   const [files, setFiles] = useState<File[]>([]);
 
   // Latched: a second click re-uploaded every selected PDF through the full
-  // parse/embed pipeline and fired a second getSuggestions LLM call.
+  // parse/embed pipeline and fired a second suggestions LLM call.
   const { run: ingest, pending: busy } = useSingleFlight(async () => {
     if (!files.length) return;
-    let anyAdded = false;
+    const addedTitles: string[] = [];
     {
       for (const f of files) {
         if (f.size > maxMb * 1024 * 1024) {
@@ -40,7 +43,7 @@ export function PdfUpload() {
         try {
           const res = await uploadPdf(f);
           if (res.chunks_added > 0) {
-            anyAdded = true;
+            addedTitles.push(kbTitleFromFilename(res.filename || f.name));
             const cov = res.coverage?.coverage_pct;
             const detail =
               `${res.chunks_added} chunks` + (cov != null ? ` · coverage ${cov}%` : "");
@@ -62,12 +65,8 @@ export function PdfUpload() {
       qc.invalidateQueries({ queryKey: ["documents", scope] });
       qc.invalidateQueries({ queryKey: ["kb-stats", scope] });
 
-      if (anyAdded && activeApiKey) {
-        const titles = files.map((f) => f.name.replace(/\.pdf$/i, ""));
-        getSuggestions({ titles, api_key: activeApiKey, model: selectedModel })
-          .then((r) => setSuggestions(r.suggestions))
-          .catch(() => undefined);
-      }
+      // Not awaited: the questions arrive in the chat panel on their own time.
+      if (addedTitles.length) void refreshSuggestions({ titles: addedTitles });
 
       setFiles([]);
       if (inputRef.current) inputRef.current.value = "";

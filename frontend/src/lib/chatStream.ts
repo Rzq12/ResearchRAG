@@ -6,6 +6,7 @@
 
 import { API_BASE_URL } from "./api";
 import { clearSession, getSession, isAccessTokenStale, refreshSession } from "./authStore";
+import type { LlmParams } from "./llm";
 import type { ChatMessage, ChatSource, Reference, WhereFilter } from "./types";
 
 export interface ChatStreamMeta {
@@ -31,8 +32,7 @@ export interface ChatStreamHandlers {
 export interface ChatStreamParams {
   query: string;
   chatHistory: Pick<ChatMessage, "role" | "content">[];
-  apiKey: string;
-  model: string;
+  llm: LlmParams;
   where: WhereFilter;
   kbOnly: boolean;
   signal?: AbortSignal;
@@ -45,8 +45,7 @@ export async function streamChat(
   const payload = JSON.stringify({
     query: params.query,
     chat_history: params.chatHistory,
-    api_key: params.apiKey,
-    model: params.model,
+    ...params.llm,
     where: params.where,
     kb_only: params.kbOnly,
   });

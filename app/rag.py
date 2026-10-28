@@ -1,8 +1,12 @@
-from app.llm_client import call_llm, stream_llm, get_provider
+from app.llm_client import (
+    call_llm, stream_llm, get_provider, key_is_optional, resolve_api_key,
+)
 from app.database import get_collection, get_parent_collection, get_parents_by_ids, embed_query
 from app.config import get_settings
 from app.logger import logger
 from dataclasses import dataclass
+from typing import Literal
+import json
 import re
 
 
@@ -53,12 +57,13 @@ def retrieve_chunks(
     api_key: str | None = None,   # enables HyDE when provided (needs an LLM)
     model: str | None = None,
     where: dict | None = None,    # optional Chroma metadata filter
+    base_url: str | None = None,  # endpoint for "openai:" models
 ) -> tuple[list[dict], list[dict]]:
     """
     Retrieval pipeline (notebook pattern, adapted to parent-child storage):
 
     1. HyDE      — LLM writes 2 hypothetical abstracts; used as extra queries
-                   (skipped when api_key/model absent or enable_hyde=False)
+                   (skipped when no usable LLM is given or enable_hyde=False)
     2. Ensemble  — vector search + BM25 keyword search, fused with RRF
                    (BM25 skipped when a `where` filter is active — the filter
                    is enforced natively by the vector search only)
@@ -78,9 +83,12 @@ def retrieve_chunks(
 
     # ── Step 1: HyDE — hypothetical documents as extra retrieval queries ─────
     queries = [query]
-    if getattr(cfg, "enable_hyde", False) and api_key and model:
+    # A keyless custom endpoint (e.g. local Ollama) still counts as a usable LLM.
+    if getattr(cfg, "enable_hyde", False) and model and (api_key or base_url):
         from app.hyde import generate_hypotheticals
-        queries += generate_hypotheticals(query, api_key=api_key, model=model)
+        queries += generate_hypotheticals(
+            query, api_key=api_key, model=model, base_url=base_url,
+        )
 
     # ── Step 2a: Vector search (3× more candidates for reranker/dedup room) ──
     candidate_k = min(k * 3, child_col.count(), 60)
@@ -405,6 +413,7 @@ def _prepare_context(
     model: str | None,
     where: dict | None,
     kb_only: bool = False,
+    base_url: str | None = None,
 ) -> tuple[str, list[Reference], str] | None:
     """
     Shared retrieval front-end for ask()/ask_stream():
@@ -420,6 +429,7 @@ def _prepare_context(
     """
     chunks, metadatas = retrieve_chunks(
         query, user_id=user_id, api_key=api_key, model=model, where=where,
+        base_url=base_url,
     )
 
     top1 = _resolve_relevance(metadatas)
@@ -549,6 +559,22 @@ def _no_chunks_response(cfg, user_id: str | None) -> RAGResponse:
     return RAGResponse(answer=answer, references=[], openalex_papers_used=0, uploaded_docs_used=0)
 
 
+def _resolve_llm(api_key: str | None, model: str | None, cfg) -> tuple[str | None, str, str]:
+    """
+    Resolve (key, model, provider) for one request.
+
+    Falls back to the server's key for the model's own provider — never to a
+    different provider's key, and never at all for user-supplied "openai:"
+    endpoints (see llm_client.resolve_api_key).
+    """
+    chosen   = model or cfg.groq_model
+    provider = get_provider(chosen)
+    key      = resolve_api_key(provider, api_key)
+    if not key and not key_is_optional(provider):
+        raise ValueError(f"API key required for provider '{provider}'.")
+    return key, chosen, provider
+
+
 # ─── Standard (non-streaming) ask ─────────────────────────────────────────────────────
 
 def ask(
@@ -559,6 +585,7 @@ def ask(
     user_id: str | None = None,
     where: dict | None = None,        # optional metadata filter (year, section, …)
     kb_only: bool = False,            # True → never fall back to live sources
+    base_url: str | None = None,      # endpoint for \"openai:\" models
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> RAGResponse:
@@ -566,14 +593,11 @@ def ask(
     → build context → call LLM → parse <think> → return answer + refs.
     """
     cfg = get_settings()
-    _key         = api_key or groq_api_key or cfg.groq_api_key
-    chosen_model = model or cfg.groq_model
-    _provider    = get_provider(chosen_model)
+    _key, chosen_model, _provider = _resolve_llm(api_key or groq_api_key, model, cfg)
 
-    if not _key:
-        raise ValueError(f"API key required for provider '{_provider}'.")
-
-    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where, kb_only)
+    prepared = _prepare_context(
+        query, cfg, user_id, _key, chosen_model, where, kb_only, base_url=base_url,
+    )
     if prepared is None:
         return _no_chunks_response(cfg, user_id)
 
@@ -604,6 +628,7 @@ def ask(
         api_key     = _key,
         max_tokens  = cfg.max_tokens_response,
         temperature = 0.3,
+        base_url    = base_url,
     )
 
     from app.reasoning import parse_think
@@ -628,11 +653,12 @@ def ask_stream(
     user_id: str | None = None,
     where: dict | None = None,         # optional metadata filter (year, section, …)
     kb_only: bool = False,             # True → never fall back to live sources
+    base_url: str | None = None,      # endpoint for \"openai:\" models
     # Backward-compat alias
     groq_api_key: str | None = None,
 ) -> tuple:
     """
-    Streaming RAG pipeline (Groq + Gemini + self-hosted).
+    Streaming RAG pipeline (Groq + Gemini + self-hosted + custom OpenAI-compatible).
     Returns (text_generator, refs, openalex_count, upload_count,
              think_holder, source).
 
@@ -649,16 +675,13 @@ def ask_stream(
     from app.reasoning import split_think_stream
 
     cfg = get_settings()
-    _key         = api_key or groq_api_key or cfg.groq_api_key
-    chosen_model = model or cfg.groq_model
-    _provider    = get_provider(chosen_model)
-
-    if not _key:
-        raise ValueError(f"API key required for provider '{_provider}'.")
+    _key, chosen_model, _provider = _resolve_llm(api_key or groq_api_key, model, cfg)
 
     empty_holder = {"think": ""}
 
-    prepared = _prepare_context(query, cfg, user_id, _key, chosen_model, where, kb_only)
+    prepared = _prepare_context(
+        query, cfg, user_id, _key, chosen_model, where, kb_only, base_url=base_url,
+    )
     if prepared is None:
         no_chunks = _no_chunks_response(cfg, user_id)
 
@@ -694,6 +717,7 @@ def ask_stream(
         api_key     = _key,
         max_tokens  = cfg.max_tokens_response,
         temperature = 0.3,
+        base_url    = base_url,
     )
     answer_stream, think_holder = split_think_stream(raw_stream)
 
@@ -737,6 +761,7 @@ def summarize_document(
     model: str | None = None,
     # backward-compat alias
     groq_api_key: str | None = None,
+    base_url: str | None = None,
 ) -> str:
     """
     Generate a structured 5-section summary of a document from its stored chunks.
@@ -752,10 +777,7 @@ def summarize_document(
     are always present in the summarizer context.
     """
     cfg = get_settings()
-    _key   = api_key or groq_api_key or cfg.groq_api_key or cfg.gemini_api_key
-    _model = model or cfg.groq_model
-    if not _key:
-        raise ValueError("API key diperlukan untuk summarize (Groq atau Gemini).")
+    _key, _model, _ = _resolve_llm(api_key or groq_api_key, model, cfg)
 
     collection = get_collection(user_id)
     # Fetch documents + metadatas so we can sort by chunk_index
@@ -840,10 +862,324 @@ def summarize_document(
         api_key     = _key,
         max_tokens  = 1200,
         temperature = 0.2,
+        base_url    = base_url,
     )
 
 
 # ─── Query Suggestions ────────────────────────────────────────────────────────
+
+SuggestionLanguage = Literal["auto", "id", "en"]
+
+_LANGUAGE_RULES: dict[str, str] = {
+    "id": "Write every question in Indonesian (Bahasa Indonesia).",
+    "en": "Write every question in English.",
+}
+
+_SUGGEST_SYSTEM = (
+    "You suggest research questions a reader can ask about their own paper "
+    "library. Every question must be answerable from the material provided. "
+    "Reply with JSON only."
+)
+
+# Per-document budget for KB-grounded suggestions: six short excerpts keep the
+# prompt well under the Groq free-tier TPM limit.
+_SUGGEST_MAX_DOCS       = 6
+_SUGGEST_EXCERPT_CHARS  = 900
+_SUGGEST_MAX_SECTIONS   = 8
+_FOLLOWUP_ANSWER_CHARS  = 4000
+
+_MIN_QUESTION_CHARS = 15
+_MAX_QUESTION_CHARS = 300
+_LIST_MARKER_RE     = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
+_JSON_BLOCK_RE      = re.compile(r"\{.*\}|\[.*\]", re.DOTALL)
+
+
+def _questions_from_json(text: str) -> list[str] | None:
+    """Questions from {"questions": [...]} or a bare JSON list; None if neither."""
+    match = _JSON_BLOCK_RE.search(text)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if isinstance(data, dict):
+        data = data.get("questions")
+    if not isinstance(data, list):
+        return None
+    return [q for q in data if isinstance(q, str)]
+
+
+def _questions_from_lines(text: str) -> list[str]:
+    """
+    Fallback for models that ignore the JSON instruction: keep numbered or
+    bulleted lines and lines ending in "?", so a preamble such as "Here are
+    five questions:" is not mistaken for a question.
+    """
+    out = []
+    for line in text.splitlines():
+        marker = _LIST_MARKER_RE.match(line)
+        if marker:
+            out.append(line[marker.end():])
+        elif line.rstrip().endswith("?"):
+            out.append(line)
+    return out
+
+
+def parse_question_list(raw: str, n: int, exclude: list[str] | None = None) -> list[str]:
+    """
+    Extract up to n clean questions from an LLM reply.
+
+    Args:
+        raw: Model output — ideally {"questions": [...]}, possibly wrapped in a
+            code fence or preceded by a <think> block.
+        n: Maximum number of questions to return.
+        exclude: Questions to drop (case-insensitive), e.g. ones already shown.
+
+    Returns:
+        De-duplicated questions in the order the model gave them.
+    """
+    from app.reasoning import parse_think
+    _, text = parse_think(raw or "")
+
+    candidates = _questions_from_json(text)
+    if candidates is None:
+        candidates = _questions_from_lines(text)
+
+    seen = {q.strip().lower() for q in (exclude or [])}
+    out: list[str] = []
+    for item in candidates:
+        question = " ".join(item.replace("**", "").split()).strip().strip('"').strip()
+        key = question.lower()
+        if not (_MIN_QUESTION_CHARS <= len(question) <= _MAX_QUESTION_CHARS) or key in seen:
+            continue
+        seen.add(key)
+        out.append(question)
+        if len(out) == n:
+            break
+    return out
+
+
+def _ask_for_questions(
+    material: str,
+    instruction: str,
+    n: int,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    language_rule: str,
+    exclude: list[str] | None,
+    temperature: float = 0.7,
+) -> list[str]:
+    """Shared prompt + parse for every suggestion flavour. Raises on LLM failure."""
+    cfg = get_settings()
+    _key, _model, _ = _resolve_llm(api_key, model, cfg)
+
+    rules = [
+        "Each question must be specific to this material — name the method, "
+        "dataset, model or finding it is about. No generic questions.",
+        "One sentence each, ending with a question mark.",
+        language_rule,
+    ]
+    if exclude:
+        listed = "; ".join(q.strip() for q in exclude[:20])
+        rules.append(f"Do not repeat or rephrase any of these: {listed}")
+
+    prompt = (
+        f"{material}\n\n"
+        f"Task: {instruction}\n\n"
+        "Rules:\n" + "\n".join(f"- {r}" for r in rules) + "\n\n"
+        'Reply with JSON only, exactly in this shape: {"questions": ["...", "..."]}'
+    )
+
+    raw = call_llm(
+        model       = _model,
+        messages    = [
+            {"role": "system", "content": _SUGGEST_SYSTEM},
+            {"role": "user",   "content": prompt},
+        ],
+        api_key     = _key,
+        max_tokens  = 120 * n + 200,
+        temperature = temperature,
+        base_url    = base_url,
+    )
+    return parse_question_list(raw, n, exclude=exclude)
+
+
+def collect_suggestion_material(
+    user_id: str | None,
+    titles: list[str] | None = None,
+) -> list[dict]:
+    """
+    Opening text and section outline for up to six documents in a user's KB.
+
+    Args:
+        user_id: Owner of the knowledge base.
+        titles: Documents to cover (e.g. the ones just ingested). When omitted,
+            the most recently added documents are used.
+
+    Returns:
+        One {"title", "excerpt", "sections"} dict per document that has chunks.
+        Grounding suggestions in chunk text — not filenames — is what lets the
+        model ask about the paper's actual methods and results.
+    """
+    collection = get_collection(user_id)
+    if not titles:
+        metas = collection.get(include=["metadatas"]).get("metadatas") or []
+        # Chroma returns rows in insertion order, so walking backwards gives
+        # the most recently ingested documents first.
+        titles = list(dict.fromkeys(
+            m["title"] for m in reversed(metas) if m and m.get("title")
+        ))
+
+    material: list[dict] = []
+    for title in list(dict.fromkeys(titles))[:_SUGGEST_MAX_DOCS]:
+        result = collection.get(where={"title": title}, include=["documents", "metadatas"])
+        docs   = result.get("documents") or []
+        if not docs:
+            continue
+        metas  = result.get("metadatas") or [{}] * len(docs)
+        paired = sorted(zip(docs, metas), key=lambda x: (x[1] or {}).get("chunk_index", 0))
+
+        parts: list[str] = []
+        used = 0
+        for text, _ in paired:
+            if used >= _SUGGEST_EXCERPT_CHARS:
+                break
+            piece = text[: _SUGGEST_EXCERPT_CHARS - used]
+            parts.append(piece)
+            used += len(piece)
+
+        sections = [
+            sec for sec in dict.fromkeys(
+                str((m or {}).get("section_title") or "").strip() for _, m in paired
+            )
+            if sec
+        ][:_SUGGEST_MAX_SECTIONS]
+
+        material.append({
+            "title":    title,
+            "excerpt":  " ".join(" ".join(parts).split()),
+            "sections": sections,
+        })
+    return material
+
+
+def suggest_questions_from_kb(
+    user_id: str | None,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None = None,
+    titles: list[str] | None = None,
+    n: int = 5,
+    language: SuggestionLanguage = "auto",
+    exclude: list[str] | None = None,
+) -> list[str]:
+    """
+    Suggest research questions grounded in the user's knowledge base.
+
+    Args:
+        user_id: Owner of the knowledge base.
+        api_key: LLM key (optional for self-hosted/custom endpoints).
+        model: Model id; provider is detected from it.
+        base_url: Endpoint for "openai:" models.
+        titles: Restrict to these documents; default is the latest ones.
+        n: Number of questions wanted.
+        language: "id", "en", or "auto" (follow the papers' language).
+        exclude: Questions already shown, so a regenerate yields new ones.
+
+    Returns:
+        Up to n questions; empty when the KB has no matching documents.
+
+    Raises:
+        ValueError: When a required API key is missing.
+        Exception: Provider errors propagate so the API can report them.
+    """
+    material = collect_suggestion_material(user_id, titles)
+    if not material and titles:
+        # Requested titles not found (renamed or deleted) — use the latest docs.
+        material = collect_suggestion_material(user_id)
+    if not material:
+        return []
+
+    blocks = []
+    for i, doc in enumerate(material, 1):
+        block = f"[{i}] {doc['title']}"
+        if doc["sections"]:
+            block += f"\nSections: {'; '.join(doc['sections'])}"
+        if doc["excerpt"]:
+            block += f"\nExcerpt: {doc['excerpt']}"
+        blocks.append(block)
+
+    spread = (
+        "Cover different papers, and mix question types: comparison, "
+        "explanation, methodology, results, limitations."
+        if len(material) > 1 else
+        "Mix question types: explanation, methodology, results, limitations."
+    )
+    return _ask_for_questions(
+        material      = "Papers in the library:\n\n" + "\n\n".join(blocks),
+        instruction   = f"Write exactly {n} research questions about these papers. {spread}",
+        n             = n,
+        api_key       = api_key,
+        model         = model,
+        base_url      = base_url,
+        language_rule = _LANGUAGE_RULES.get(
+            language, "Write the questions in the same language as the papers."
+        ),
+        exclude       = exclude,
+    )
+
+
+def generate_followup_questions(
+    question: str,
+    answer: str,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None = None,
+    n: int = 3,
+    language: SuggestionLanguage = "auto",
+) -> list[str]:
+    """
+    Suggest follow-up questions after an answer.
+
+    Args:
+        question: The question the user asked.
+        answer: The answer they received (truncated to keep the call cheap).
+        api_key: LLM key (optional for self-hosted/custom endpoints).
+        model: Model id; provider is detected from it.
+        base_url: Endpoint for "openai:" models.
+        n: Number of follow-ups wanted.
+        language: "id", "en", or "auto" (follow the user's question).
+
+    Returns:
+        Up to n follow-up questions, never repeating the original one.
+    """
+    if not answer.strip():
+        return []
+    material = (
+        f"Question the user asked:\n{question.strip()}\n\n"
+        f"Answer they received:\n{answer.strip()[:_FOLLOWUP_ANSWER_CHARS]}"
+    )
+    return _ask_for_questions(
+        material      = material,
+        instruction   = (
+            f"Write exactly {n} follow-up questions the user is likely to ask "
+            "next. Each must dig into something the answer mentions — a method, "
+            "a result, a limitation, a comparison — instead of restating the "
+            "original question."
+        ),
+        n             = n,
+        api_key       = api_key,
+        model         = model,
+        base_url      = base_url,
+        language_rule = _LANGUAGE_RULES.get(
+            language, "Write the questions in the same language as the user's question."
+        ),
+        exclude       = [question],
+        temperature   = 0.5,
+    )
+
 
 def generate_query_suggestions(
     works_or_titles: list,
@@ -852,54 +1188,44 @@ def generate_query_suggestions(
     n: int = 5,
     # backward-compat alias
     groq_api_key: str | None = None,
+    base_url: str | None = None,
+    language: SuggestionLanguage = "auto",
 ) -> list[str]:
     """
-    Generate n specific research question suggestions based on ingested works.
-    Works with Gemini or Groq — provider auto-detected from model name.
+    Suggest research questions from OpenAlex works or bare titles.
+
+    Kept for the Streamlit app and /api/openalex/suggestions; the React client
+    uses suggest_questions_from_kb(), which reads the ingested text instead.
+    Fails soft: any error yields an empty list.
     """
-    cfg    = get_settings()
-    _key   = api_key or groq_api_key or cfg.groq_api_key or cfg.gemini_api_key
-    _model = model or cfg.groq_model
-    if not _key:
+    lines = []
+    for item in works_or_titles[:_SUGGEST_MAX_DOCS]:
+        if isinstance(item, str):
+            lines.append(f"- {item}")
+        else:
+            abstract = (getattr(item, "abstract", "") or "").strip()
+            snippet  = abstract[:400] + ("…" if len(abstract) > 400 else "")
+            lines.append(f"- {item.title}: {snippet}" if snippet else f"- {item.title}")
+    if not lines:
         return []
 
-    context_parts = []
-    for item in works_or_titles[:6]:
-        if isinstance(item, str):
-            context_parts.append(f"- {item}")
-        else:
-            abstract = getattr(item, "abstract", "") or ""
-            snippet  = abstract[:200].strip()
-            ellipsis = "…" if len(abstract) > 200 else ""
-            context_parts.append(f"- **{item.title}**: {snippet}{ellipsis}")
-    context = "\n".join(context_parts)
-
-    prompt = (
-        f"Based on these research papers, generate exactly {n} specific and insightful research questions "
-        "that can be answered from the content:\n\n"
-        f"Papers:\n{context}\n\n"
-        "Rules:\n"
-        "- Each question on its own line starting with a number and period (e.g. '1. What is...')\n"
-        "- Questions should be specific, not generic\n"
-        "- Mix question types: comparison, explanation, methodology, results, limitations\n"
-        "- No introductory text, just the numbered list\n\n"
-        f"Generate {n} questions:"
-    )
-
     try:
-        raw = call_llm(
-            model       = _model,
-            messages    = [{"role": "user", "content": prompt}],
-            api_key     = _key,
-            max_tokens  = 400,
-            temperature = 0.7,
+        return _ask_for_questions(
+            material      = "Papers:\n" + "\n".join(lines),
+            instruction   = (
+                f"Write exactly {n} research questions that can be answered from "
+                "these papers. Mix question types: comparison, explanation, "
+                "methodology, results, limitations."
+            ),
+            n             = n,
+            api_key       = api_key or groq_api_key,
+            model         = model,
+            base_url      = base_url,
+            language_rule = _LANGUAGE_RULES.get(
+                language, "Write the questions in the same language as the papers."
+            ),
+            exclude       = None,
         )
-        questions = []
-        for line in raw.split("\n"):
-            line    = line.strip()
-            cleaned = re.sub(r"^\d+[\.\)]\s*", "", line).strip()
-            if cleaned and len(cleaned) > 15:
-                questions.append(cleaned)
-        return questions[:n]
-    except Exception:
+    except Exception as exc:
+        print(f"[Suggestions] generation failed: {exc}")
         return []

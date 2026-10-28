@@ -43,6 +43,7 @@ def _event_stream(body: ChatRequest, user_id: str) -> Iterator[str]:
             chat_history=history,
             api_key=body.api_key,
             model=body.model,
+            base_url=body.base_url,
             user_id=user_id,
             where=body.where,
             kb_only=body.kb_only,

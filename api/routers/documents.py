@@ -93,6 +93,7 @@ def summarize(
         user_id=user_id,
         api_key=body.api_key,
         model=body.model,
+        base_url=body.base_url,
     )
     return SummarizeResponse(summary=summary)
 

@@ -12,6 +12,7 @@ import {
   sessionFromTokenResponse,
   setSession,
 } from "./authStore";
+import type { LlmParams } from "./llm";
 import type {
   AppConfig,
   DocumentInfo,
@@ -22,6 +23,7 @@ import type {
   PdfIngestResult,
   SemanticHit,
   Session,
+  SuggestionLanguage,
   WhereFilter,
 } from "./types";
 
@@ -215,21 +217,40 @@ export const classifyTopics = (works: OpenAlexWork[], groq_api_key: string, mode
     jsonBody({ works, groq_api_key, model: model || null }),
   );
 
-export const getSuggestions = (params: {
-  works?: OpenAlexWork[];
-  titles?: string[];
-  api_key: string;
-  model?: string;
-  n?: number;
-}) =>
+// ─── Suggestions ─────────────────────────────────────────────────────────────
+/** Starter questions grounded in the text of the user's ingested documents. */
+export const getKbSuggestions = (
+  llm: LlmParams,
+  params: {
+    titles?: string[];
+    n?: number;
+    language: SuggestionLanguage;
+    exclude?: string[];
+  },
+) =>
   request<{ suggestions: string[] }>(
-    "/api/openalex/suggestions",
+    "/api/suggestions",
     jsonBody({
-      works: params.works || null,
-      titles: params.titles || null,
-      api_key: params.api_key,
-      model: params.model || null,
+      ...llm,
+      titles: params.titles?.length ? params.titles : null,
       n: params.n ?? 5,
+      language: params.language,
+      exclude: params.exclude ?? [],
+    }),
+  );
+
+/** Follow-up questions for a finished answer. */
+export const getFollowups = (
+  llm: LlmParams,
+  params: { question: string; answer: string; language?: SuggestionLanguage },
+) =>
+  request<{ suggestions: string[] }>(
+    "/api/suggestions/followups",
+    jsonBody({
+      ...llm,
+      question: params.question,
+      answer: params.answer,
+      language: params.language ?? "auto",
     }),
   );
 
@@ -245,11 +266,8 @@ export async function uploadPdf(file: File): Promise<PdfIngestResult> {
   return request<PdfIngestResult>("/api/documents/upload", { method: "POST", body: form });
 }
 
-export const summarizeDocument = (title: string, api_key: string, model?: string) =>
-  request<{ summary: string }>(
-    "/api/documents/summarize",
-    jsonBody({ title, api_key, model: model || null }),
-  );
+export const summarizeDocument = (title: string, llm: LlmParams) =>
+  request<{ summary: string }>("/api/documents/summarize", jsonBody({ title, ...llm }));
 
 export const deleteDocument = (title: string) =>
   request<{ deleted: number }>("/api/documents", {

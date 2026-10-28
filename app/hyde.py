@@ -34,6 +34,7 @@ def generate_hypotheticals(
     api_key: str,
     model: str,
     n: int | None = None,
+    base_url: str | None = None,
 ) -> list[str]:
     """
     Generate n hypothetical abstract paragraphs for the question.
@@ -56,6 +57,7 @@ def generate_hypotheticals(
                 api_key     = api_key,
                 max_tokens  = getattr(cfg, "hyde_max_tokens", 150),
                 temperature = getattr(cfg, "hyde_temperature", 0.9),
+                base_url    = base_url,
             )
         except Exception as exc:
             print(f"[HyDE] generation failed, skipping: {exc}")
