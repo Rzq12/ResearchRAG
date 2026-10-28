@@ -39,8 +39,10 @@ AI-powered research assistant — cari, ingest, dan tanya paper ilmiah menggunak
 | **RAG**           | **Reasoning `<think>`** — model bernalar dulu, tampil sebagai blok collapsible          |
 | **RAG**           | Metadata filtering — filter retrieval per dokumen / section / tahun dari sidebar        |
 | **RAG**           | Sitasi `[1]`, `[2]` per jawaban dengan relevance score + sitasi akademik (author, tahun, section) |
-| **LLM**           | Triple provider: **Groq**, **Google Gemini**, & **self-hosted** (`hf:` — vLLM/TGI untuk model fine-tuned sendiri) |
-| **Produktivitas** | 💡 Query suggestions — 5 pertanyaan otomatis setelah ingest                            |
+| **LLM**           | Provider: **Groq**, **Google Gemini**, **self-hosted** (`hf:` — vLLM/TGI untuk model fine-tuned sendiri) |
+| **LLM**           | **Custom OpenAI-compatible** (`openai:`) — user mengisi base URL, model, dan key sendiri (OpenAI, OpenRouter, Together, Ollama, LM Studio) |
+| **Produktivitas** | 💡 Query suggestions — dibuat dari **isi** dokumen di KB (bukan nama file), pilih bahasa ID/EN, bisa di-regenerate |
+| **Produktivitas** | ↪️ Follow-up questions — 3 pertanyaan lanjutan setelah tiap jawaban (bisa dimatikan) |
 | **Produktivitas** | 📝 Paper summarizer — ringkasan 5-seksi per dokumen                                    |
 | **Produktivitas** | 🏷️ Topic classifier — label otomatis per paper (ML, NLP, CV, RAG, dll)                |
 | **Produktivitas** | 🔍 Semantic Search panel — jelajahi knowledge base tanpa memanggil LLM                 |

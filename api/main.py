@@ -34,7 +34,7 @@ from app.sessions import init_sessions_db, purge_expired
 from api.errors import register_exception_handlers
 from api.middleware import RequestContextMiddleware, configure_logging
 from api.rate_limit import limiter
-from api.routers import auth, chat, documents, meta, openalex, search
+from api.routers import auth, chat, documents, meta, openalex, search, suggestions
 from api.settings import get_api_settings
 
 logger = logging.getLogger("researchrag.api")
@@ -107,6 +107,7 @@ app.include_router(openalex.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(search.router)
+app.include_router(suggestions.router)
 
 
 @app.get("/")

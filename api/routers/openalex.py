@@ -159,6 +159,7 @@ def suggestions(
         works_or_titles,
         api_key=body.api_key,
         model=body.model,
+        base_url=body.base_url,
         n=body.n,
     )
     return SuggestionsResponse(suggestions=result)

@@ -18,10 +18,10 @@ import { truncate } from "@/lib/utils";
 
 export function KnowledgeBase() {
   const { session } = useAuth();
-  const { selectedModel, activeApiKey } = useSettings();
+  const { llm, llmReady, llmMissing } = useSettings();
   const toast = useToast();
   const qc = useQueryClient();
-  const { setSuggestions } = useWorkspace();
+  const { clearSuggestions } = useWorkspace();
   const scope = session?.userId ?? "anonymous";
 
   const { data: stats } = useKbStats();
@@ -38,13 +38,13 @@ export function KnowledgeBase() {
   // Latched: summarize is an LLM call, and `busyTitle` was written but never
   // checked, so repeated clicks on the same document each spent a completion.
   const { run: summarize } = useSingleFlight(async (title: string) => {
-    if (!activeApiKey) {
-      toast.warning("An API key is required to summarize. Set one above.");
+    if (!llmReady) {
+      toast.warning(llmMissing ?? "Configure a model above to summarize.");
       return;
     }
     setBusyTitle(title);
     try {
-      const res = await summarizeDocument(title, activeApiKey, selectedModel);
+      const res = await summarizeDocument(title, llm);
       setSummaries((prev) => ({ ...prev, [title]: res.summary }));
     } catch (err) {
       toast.error((err as Error).message);
@@ -72,7 +72,7 @@ export function KnowledgeBase() {
     try {
       const res = await clearKnowledgeBase();
       setSummaries({});
-      setSuggestions([]);
+      clearSuggestions();
       toast.success(`Cleared ${res.cleared} chunks.`);
       invalidate();
     } catch (err) {

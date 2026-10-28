@@ -6,11 +6,16 @@ Supports:
   - Google Gemini  (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash, …)
   - Self-hosted OpenAI-compatible endpoints (vLLM / TGI / HF Inference) —
     for serving your own fine-tuned model without changing app code.
+  - Any user-supplied OpenAI-compatible endpoint (OpenAI, OpenRouter, Together,
+    Ollama, LM Studio, …) — base URL, key and model name come from the user.
 
 Provider is auto-detected from model name:
   - starts with "gemini-" → Google Gemini      (needs GEMINI_API_KEY)
   - starts with "hf:"     → self-hosted server (needs HF_ENDPOINT_URL; the
                             part after "hf:" is sent as the model name)
+  - starts with "openai:" → user-supplied OpenAI-compatible endpoint (needs a
+                            per-request base_url; the part after "openai:" is
+                            sent as the model name)
   - anything else         → Groq               (needs GROQ_API_KEY)
 
 Usage:
@@ -107,7 +112,10 @@ PROVIDER_HINTS: dict[str, tuple[str, str]] = {
 
 
 def get_provider(model: str) -> str:
-    """Returns 'gemini', 'hf' (self-hosted), or 'groq' based on model name."""
+    """Returns 'gemini', 'hf' (self-hosted), 'openai' (user-supplied endpoint),
+    or 'groq' based on model name."""
+    if model.startswith("openai:"):
+        return "openai"
     if model.startswith("hf:"):
         return "hf"
     if model.startswith("gemini"):
@@ -118,6 +126,33 @@ def get_provider(model: str) -> str:
 def get_model_label(model: str) -> str:
     entry = MODEL_CATALOG.get(model)
     return entry[0] if entry else model
+
+
+def resolve_api_key(provider: str, api_key: str | None) -> str | None:
+    """
+    Pick the key for a provider: the caller's key first, then the server's own
+    key for that provider.
+
+    The "openai" provider never falls back to a server key. Its base URL comes
+    from the user, so a fallback would hand GROQ_API_KEY (or any other server
+    secret) to whatever host the user typed in.
+    """
+    if api_key:
+        return api_key
+    if provider == "openai":
+        return None
+    from app.config import get_settings
+    cfg = get_settings()
+    if provider == "gemini":
+        return cfg.gemini_api_key
+    if provider == "hf":
+        return cfg.hf_api_token
+    return cfg.groq_api_key
+
+
+def key_is_optional(provider: str) -> bool:
+    """Self-hosted and custom endpoints may run without auth (e.g. Ollama)."""
+    return provider in ("hf", "openai")
 
 
 # ─── Message format conversion ────────────────────────────────────────────────
@@ -257,7 +292,14 @@ def _stream_gemini(
             yield chunk.text
 
 
-# ─── Self-hosted (OpenAI-compatible: vLLM / TGI / HF Inference) ───────────────
+# ─── OpenAI-compatible HTTP (shared by "hf:" and "openai:") ──────────────────
+
+def _bearer_headers(token: str | None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
 
 def _hf_endpoint_and_headers(api_key: str | None) -> tuple[str, dict]:
     from app.config import get_settings
@@ -268,24 +310,57 @@ def _hf_endpoint_and_headers(api_key: str | None) -> tuple[str, dict]:
             "Model prefix 'hf:' requires HF_ENDPOINT_URL in .env "
             "(an OpenAI-compatible server such as vLLM or TGI)."
         )
-    token   = api_key or cfg.hf_api_token
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return f"{endpoint}/v1/chat/completions", headers
+    token = api_key or cfg.hf_api_token
+    return f"{endpoint}/v1/chat/completions", _bearer_headers(token)
 
 
-def _call_hf(
-    model: str,
-    messages: list[dict],
+def _openai_endpoint_and_headers(
+    base_url: str | None,
     api_key: str | None,
+) -> tuple[str, dict]:
+    """
+    Build the chat-completions URL for a user-supplied endpoint.
+
+    `base_url` follows the OpenAI SDK convention and already includes the
+    version segment (``https://api.openai.com/v1``,
+    ``http://localhost:11434/v1``). A pasted full ``…/chat/completions`` URL is
+    accepted as-is.
+    """
+    endpoint = (base_url or "").strip().rstrip("/")
+    if not endpoint:
+        raise ValueError(
+            "Model prefix 'openai:' requires a base URL for the "
+            "OpenAI-compatible endpoint."
+        )
+    if not endpoint.endswith("/chat/completions"):
+        endpoint = f"{endpoint}/chat/completions"
+    return endpoint, _bearer_headers(api_key)
+
+
+def _endpoint_for(
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+) -> tuple[str, dict, str]:
+    """Returns (url, headers, model_name_on_the_wire) for hf:/openai: models."""
+    if get_provider(model) == "openai":
+        url, headers = _openai_endpoint_and_headers(base_url, api_key)
+        return url, headers, model.removeprefix("openai:")
+    url, headers = _hf_endpoint_and_headers(api_key)
+    return url, headers, model.removeprefix("hf:")
+
+
+def _call_openai_compatible(
+    url: str,
+    headers: dict,
+    model_name: str,
+    messages: list[dict],
     max_tokens: int,
     temperature: float,
 ) -> str:
     import httpx
-    url, headers = _hf_endpoint_and_headers(api_key)
     payload = {
-        "model":       model.removeprefix("hf:"),
+        "model":       model_name,
         "messages":    messages,
         "max_tokens":  max_tokens,
         "temperature": temperature,
@@ -293,21 +368,21 @@ def _call_hf(
     with httpx.Client(timeout=120) as client:
         resp = client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        return resp.json()["choices"][0]["message"]["content"] or ""
 
 
-def _stream_hf(
-    model: str,
+def _stream_openai_compatible(
+    url: str,
+    headers: dict,
+    model_name: str,
     messages: list[dict],
-    api_key: str | None,
     max_tokens: int,
     temperature: float,
 ) -> Generator[str, None, None]:
     import json as _json
     import httpx
-    url, headers = _hf_endpoint_and_headers(api_key)
     payload = {
-        "model":       model.removeprefix("hf:"),
+        "model":       model_name,
         "messages":    messages,
         "max_tokens":  max_tokens,
         "temperature": temperature,
@@ -325,6 +400,7 @@ def _stream_hf(
                 try:
                     delta = _json.loads(data)["choices"][0]["delta"].get("content")
                 except (KeyError, IndexError, ValueError):
+                    # Usage-only frames carry an empty `choices` list.
                     continue
                 if delta:
                     yield delta
@@ -341,8 +417,8 @@ def friendly_llm_error(exc: Exception) -> tuple[str, str]:
 
     Returns:
         Tuple of (category, markdown_message) where category is one of
-        "rate_limit", "auth", "context", "model_unavailable", "network",
-        "unknown" — and markdown_message is safe to show to end users
+        "rate_limit", "auth", "context", "model_unavailable", "config",
+        "network", "unknown" — and markdown_message is safe to show to end users
         (no stack trace, no raw API payload).
     """
     err = str(exc).lower()
@@ -368,7 +444,7 @@ def friendly_llm_error(exc: Exception) -> tuple[str, str]:
             "🔑 **API key tidak valid atau tidak punya akses.**\n\n"
             "Periksa kembali API key di sidebar — pastikan key sesuai dengan "
             "provider model yang dipilih (Gemini key untuk model Gemini, "
-            "Groq key untuk model Groq)."
+            "Groq key untuk model Groq, key endpoint Anda untuk provider custom)."
         )
 
     if any(s in err for s in (
@@ -389,7 +465,14 @@ def friendly_llm_error(exc: Exception) -> tuple[str, str]:
         return "model_unavailable", (
             "❓ **Model tidak tersedia.**\n\n"
             "Model yang dipilih mungkin sudah dinonaktifkan oleh provider. "
-            "Pilih model lain di sidebar."
+            "Pilih model lain di sidebar. Untuk provider custom, periksa juga "
+            "base URL (biasanya diakhiri `/v1`) dan nama modelnya."
+        )
+
+    if "base url" in err:
+        return "config", (
+            "⚙️ **Provider custom belum lengkap.**\n\n"
+            "Isi base URL dan nama model OpenAI-compatible di sidebar."
         )
 
     if any(s in err for s in (
@@ -413,31 +496,37 @@ def friendly_llm_error(exc: Exception) -> tuple[str, str]:
 def call_llm(
     model: str,
     messages: list[dict],
-    api_key: str,
+    api_key: str | None,
     max_tokens: int = 2000,
     temperature: float = 0.3,
+    base_url: str | None = None,
 ) -> str:
-    """Non-streaming unified LLM call."""
+    """Non-streaming unified LLM call. `base_url` is used by "openai:" models only."""
     provider = get_provider(model)
     if provider == "gemini":
         return _call_gemini(model, messages, api_key, max_tokens, temperature)
-    if provider == "hf":
-        return _call_hf(model, messages, api_key, max_tokens, temperature)
+    if provider in ("hf", "openai"):
+        url, headers, name = _endpoint_for(model, api_key, base_url)
+        return _call_openai_compatible(url, headers, name, messages, max_tokens, temperature)
     return _call_groq(model, messages, api_key, max_tokens, temperature)
 
 
 def stream_llm(
     model: str,
     messages: list[dict],
-    api_key: str,
+    api_key: str | None,
     max_tokens: int = 2000,
     temperature: float = 0.3,
+    base_url: str | None = None,
 ) -> Generator[str, None, None]:
     """Streaming unified LLM call. Yields text tokens."""
     provider = get_provider(model)
     if provider == "gemini":
         yield from _stream_gemini(model, messages, api_key, max_tokens, temperature)
-    elif provider == "hf":
-        yield from _stream_hf(model, messages, api_key, max_tokens, temperature)
+    elif provider in ("hf", "openai"):
+        url, headers, name = _endpoint_for(model, api_key, base_url)
+        yield from _stream_openai_compatible(
+            url, headers, name, messages, max_tokens, temperature,
+        )
     else:
         yield from _stream_groq(model, messages, api_key, max_tokens, temperature)

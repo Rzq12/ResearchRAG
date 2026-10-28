@@ -8,9 +8,37 @@ converted via ``api.serialize``.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import re
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+_BASE_URL_RE = re.compile(r"^https?://[^\s/?#]+[^\s]*$", re.IGNORECASE)
+
+
+def _check_base_url(value: str | None) -> str | None:
+    """
+    Accept any http(s) URL for a user-supplied OpenAI-compatible endpoint.
+
+    Only the shape is checked — private and loopback hosts are deliberately
+    allowed so local servers (Ollama, LM Studio) work. That means the API can
+    be pointed at internal addresses; restrict hosts here if the deployment
+    sits next to services that must not be reachable.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if not _BASE_URL_RE.match(value):
+        raise ValueError("base_url must be an http:// or https:// URL")
+    return value
+
+
+# Endpoint for "openai:" models; ignored by every other provider.
+BaseUrl = Annotated[str | None, Field(max_length=500), AfterValidator(_check_base_url)]
+
+SuggestionLanguage = Literal["auto", "id", "en"]
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -56,7 +84,7 @@ class MeResponse(BaseModel):
 class ModelInfo(BaseModel):
     id: str
     label: str
-    provider: Literal["groq", "gemini", "hf"]
+    provider: Literal["groq", "gemini", "hf", "openai"]
     hint_icon: str = ""
     hint_text: str = ""
 
@@ -147,13 +175,38 @@ class SuggestionsRequest(BaseModel):
     # Either OpenAlex works or plain title strings.
     works: list[OpenAlexWorkModel] | None = None
     titles: list[str] | None = None
-    api_key: str
+    api_key: str = ""
     model: str | None = None
+    base_url: BaseUrl = None
     n: int = Field(5, ge=1, le=20)
 
 
 class SuggestionsResponse(BaseModel):
     suggestions: list[str]
+
+
+class KbSuggestionsRequest(BaseModel):
+    """Suggestions grounded in the caller's own knowledge base."""
+
+    # Documents to focus on (e.g. just ingested); omitted → latest documents.
+    titles: list[str] | None = Field(None, max_length=20)
+    api_key: str = ""
+    model: str | None = None
+    base_url: BaseUrl = None
+    n: int = Field(5, ge=1, le=10)
+    language: SuggestionLanguage = "auto"
+    # Questions already shown, so a regenerate returns different ones.
+    exclude: list[str] = Field(default_factory=list, max_length=30)
+
+
+class FollowupsRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000)
+    answer: str = Field(..., min_length=1, max_length=20000)
+    api_key: str = ""
+    model: str | None = None
+    base_url: BaseUrl = None
+    n: int = Field(3, ge=1, le=5)
+    language: SuggestionLanguage = "auto"
 
 
 # ─── Documents / knowledge base ───────────────────────────────────────────────
@@ -201,8 +254,9 @@ class DeleteDocumentResponse(BaseModel):
 
 class SummarizeRequest(BaseModel):
     title: str
-    api_key: str
+    api_key: str = ""
     model: str | None = None
+    base_url: BaseUrl = None
 
 
 class SummarizeResponse(BaseModel):
@@ -228,8 +282,9 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
     chat_history: list[ChatMessage] = Field(default_factory=list, max_length=40)
-    api_key: str
+    api_key: str = ""  # may be empty for keyless self-hosted/custom endpoints
     model: str | None = None
+    base_url: BaseUrl = None
     where: dict[str, Any] | None = None  # optional Chroma metadata filter
     # When True, answer strictly from the user's knowledge base and never fall
     # back to live OpenAlex/web. Defaults False to match the backend default.

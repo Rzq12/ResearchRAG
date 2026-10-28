@@ -1,6 +1,9 @@
 // Wire types mirroring api/schemas.py. Keep in sync with the backend.
 
-export type Provider = "groq" | "gemini" | "hf";
+export type Provider = "groq" | "gemini" | "hf" | "openai";
+
+/** Language for generated questions; "auto" follows the source material. */
+export type SuggestionLanguage = "auto" | "id" | "en";
 
 export interface ModelInfo {
   id: string;
@@ -111,6 +114,10 @@ export interface ChatMessage {
   references?: Reference[];
   source?: ChatSource;
   error?: boolean;
+  /** Identifies an assistant turn so late follow-ups land on the right message. */
+  turnId?: string;
+  /** Suggested next questions, filled in after the answer finishes. */
+  followups?: string[];
 }
 
 export interface SemanticHit {

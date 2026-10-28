@@ -35,7 +35,7 @@ def eval_kb():
 def test_hyde_hypotheticals_used_as_extra_queries(eval_kb, monkeypatch):
     calls = []
 
-    def fake_llm(model, messages, api_key, max_tokens, temperature):
+    def fake_llm(model, messages, api_key, max_tokens, temperature, base_url=None):
         calls.append(messages[-1]["content"])
         return "Low-rank adapters freeze pretrained weights and train small matrices."
 
