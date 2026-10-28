@@ -396,6 +396,13 @@ def _build_rag_messages(
         "IMPORTANT: write the final answer in the language of the QUESTION above — "
         "ignore the language of the context passages."
     )
+    if getattr(get_settings(), "enable_reasoning", False):
+        # Repeated per turn: history answers have their <think> block stripped,
+        # so from the second question on the model imitates them and skips it.
+        user_message += (
+            "\n\nStart your reply with your reasoning inside <think></think>, "
+            "then write the final answer."
+        )
     messages = [{"role": "system", "content": _system_prompt()}]
     if chat_history:
         messages.extend(chat_history[-6:])

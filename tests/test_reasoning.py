@@ -83,3 +83,29 @@ def test_stream_empty_input():
     answer, holder = _consume([])
     assert answer == ""
     assert holder["think"] == ""
+
+
+# ─── per-turn reminder in the RAG prompt ──────────────────────────────────────
+
+def _rag_messages(monkeypatch, enable_reasoning: bool):
+    import app.rag as rag
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "enable_reasoning", enable_reasoning, raising=False)
+    # A second turn: the earlier answer reaches the model with <think> stripped.
+    history = [
+        {"role": "user", "content": "What is LoRA?"},
+        {"role": "assistant", "content": "LoRA freezes the base weights [1]."},
+    ]
+    return rag._build_rag_messages("How is it evaluated?", "ctx", "[1] Paper", history)
+
+
+def test_rag_messages_remind_think_on_every_turn_when_reasoning_enabled(monkeypatch):
+    messages = _rag_messages(monkeypatch, enable_reasoning=True)
+    assert messages[-1]["role"] == "user"
+    assert "<think></think>" in messages[-1]["content"]
+
+
+def test_rag_messages_no_think_reminder_when_reasoning_disabled(monkeypatch):
+    messages = _rag_messages(monkeypatch, enable_reasoning=False)
+    assert "<think>" not in messages[-1]["content"]
